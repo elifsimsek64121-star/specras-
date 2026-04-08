@@ -1,602 +1,724 @@
+// ═══════════════════════════════════════════════════════════════
+// SPECTRA PRO – Professional Metal Detector  v3.0.0
+// Single-file Flutter app  –  Android / iOS
+//
+// pubspec.yaml dependencies:
+//   sensors_plus: ^4.0.2
+//   vibration: ^1.8.4
+//   just_audio: ^0.9.36
+//   shared_preferences: ^2.2.2
+//   intl: ^0.18.1
+//   permission_handler: ^11.3.0
+//   in_app_purchase: ^3.1.13
+//   in_app_purchase_android: ^0.3.5
+//
+// AndroidManifest.xml:
+//   <uses-permission android:name="com.android.vending.BILLING"/>
+//   <uses-permission android:name="android.permission.VIBRATE"/>
+//   <uses-permission android:name="android.permission.INTERNET"/>
+//
+// Google Play Console → Subscriptions:
+//   spectra_pro_annual   (Annual)
+//   spectra_pro_monthly  (Monthly)
+// ═══════════════════════════════════════════════════════════════
+
 import 'dart:async';
 import 'dart:math';
-import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:sensors_plus/sensors_plus.dart';
-import 'package:vibration/vibration.dart';
-import 'package:just_audio/just_audio.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:in_app_purchase_android/in_app_purchase_android.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
-import 'package:permission_handler/permission_handler.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vibration/vibration.dart';
 
-// ─────────────────────────────────────────────
-//  ENTRY POINT
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// ENTRY POINT
+// ──────────────────────────────────────────────
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
     statusBarColor: Colors.transparent,
     statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: Color(0xFF080C1A),
   ));
-  await SharedPreferences.getInstance();
+  InAppPurchaseAndroidPlatformAddition.enablePendingPurchases();
   runApp(const SpectraApp());
 }
 
-// ─────────────────────────────────────────────
-//  CONSTANTS
-// ─────────────────────────────────────────────
-class AppColors {
-  static const bg = Color(0xFF080C1A);
-  static const surface = Color(0xFF0F1629);
-  static const card = Color(0xFF141B2D);
+// ──────────────────────────────────────────────
+// DESIGN TOKENS
+// ──────────────────────────────────────────────
+class C {
+  static const bg = Color(0xFF060A16);
+  static const surface = Color(0xFF0D1222);
+  static const card = Color(0xFF111827);
+  static const cardHi = Color(0xFF1A2235);
   static const border = Color(0xFF1E2A42);
-  static const cyan = Color(0xFF00E5FF);
-  static const gold = Color(0xFFFFD700);
-  static const goldDim = Color(0xFFB8960A);
-  static const green = Color(0xFF00FF9F);
-  static const orange = Color(0xFFFF6B35);
-  static const red = Color(0xFFFF3366);
-  static const purple = Color(0xFF9C27B0);
-  static const textPrim = Color(0xFFECEFF1);
-  static const textSec = Color(0xFF78909C);
-  static const textDim = Color(0xFF37474F);
-}
+  static const borderHi = Color(0xFF2A3A5A);
 
-class AppText {
+  static const cyan = Color(0xFF00D4FF);
+  static const cyanDim = Color(0xFF0099BB);
+  static const gold = Color(0xFFFFCC00);
+  static const goldDim = Color(0xFFB8980A);
+  static const green = Color(0xFF00E87A);
+  static const greenDim = Color(0xFF00A855);
+  static const orange = Color(0xFFFF7A35);
+  static const red = Color(0xFFFF2D55);
+  static const purple = Color(0xFFBF5AF2);
+
+  static const tPrim = Color(0xFFF0F4FF);
+  static const tSec = Color(0xFF6B7A99);
+  static const tDim = Color(0xFF2D3A55);
   static const mono = 'RobotoMono';
 }
 
-// ─────────────────────────────────────────────
-//  SUBSCRIPTION TIERS
-// ─────────────────────────────────────────────
-enum SubscriptionTier { free, pro }
+// ──────────────────────────────────────────────
+// IAP IDs
+// ──────────────────────────────────────────────
+class IAP {
+  static const annual = 'spectra_pro_annual';
+  static const monthly = 'spectra_pro_monthly';
+  static const ids = <String>{annual, monthly};
+}
 
-// ─────────────────────────────────────────────
-//  MODELS
-// ─────────────────────────────────────────────
+enum Tier { free, pro }
+
+// ──────────────────────────────────────────────
+// DATA MODELS
+// ──────────────────────────────────────────────
 class MagReading {
   final DateTime ts;
-  final double x, y, z, magnitude, fieldStrength;
-  MagReading(
-      {required this.ts,
-      required this.x,
-      required this.y,
-      required this.z,
-      required this.magnitude,
-      required this.fieldStrength});
+  final double x, y, z, raw, signal;
 
-  Map<String, dynamic> toJson() => {
-        'ts': ts.toIso8601String(),
-        'x': x,
-        'y': y,
-        'z': z,
-        'mag': magnitude,
-        'fs': fieldStrength,
-      };
+  MagReading({
+    required this.ts,
+    required this.x,
+    required this.y,
+    required this.z,
+    required this.raw,
+    required this.signal,
+  });
+
+  static String toCsv(List<MagReading> list) {
+    final sb = StringBuffer('timestamp,x_uT,y_uT,z_uT,magnitude_uT,signal\n');
+    for (final r in list) {
+      sb.writeln(
+        '${r.ts.toIso8601String()},'
+        '${r.x.toStringAsFixed(4)},'
+        '${r.y.toStringAsFixed(4)},'
+        '${r.z.toStringAsFixed(4)},'
+        '${r.raw.toStringAsFixed(4)},'
+        '${r.signal.toStringAsFixed(4)}',
+      );
+    }
+    return sb.toString();
+  }
 }
 
-class Detection {
+class DetectionEvent {
   final DateTime ts;
-  final String type; // ferrous | nonferrous | gold | unknown
-  final double confidence;
-  final double signal;
+  final String type;
+  final double conf, signal;
   final String label;
   final Color color;
+  final IconData icon;
 
-  Detection(
-      {required this.ts,
-      required this.type,
-      required this.confidence,
-      required this.signal,
-      required this.label,
-      required this.color});
+  DetectionEvent({
+    required this.ts,
+    required this.type,
+    required this.conf,
+    required this.signal,
+    required this.label,
+    required this.color,
+    required this.icon,
+  });
 }
 
-class BtSensorData {
-  final double magnitude;
-  final double signal;
-  final String raw;
-  BtSensorData(
-      {required this.magnitude, required this.signal, required this.raw});
-}
+// ──────────────────────────────────────────────
+// LOGGER
+// ──────────────────────────────────────────────
+class Log {
+  static final _buf = <String>[];
 
-// ─────────────────────────────────────────────
-//  LOGGER
-// ─────────────────────────────────────────────
-class AppLog {
-  static final _logs = <String>[];
-  static void log(String m) {
-    final t = DateFormat('HH:mm:ss.SSS').format(DateTime.now());
-    final msg = '[$t] $m';
-    _logs.add(msg);
-    debugPrint(msg);
-    if (_logs.length > 1500) _logs.removeAt(0);
+  static void i(String m) {
+    final s = '[${DateFormat('HH:mm:ss.SSS').format(DateTime.now())}] $m';
+    _buf.add(s);
+    debugPrint(s);
+    if (_buf.length > 2000) _buf.removeAt(0);
   }
 
-  static List<String> get all => List.from(_logs);
-  static void clear() => _logs.clear();
+  static List<String> get all => List.from(_buf);
+  static void clear() => _buf.clear();
 }
 
-// ─────────────────────────────────────────────
-//  APP ROOT
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// APP ROOT
+// ──────────────────────────────────────────────
 class SpectraApp extends StatelessWidget {
   const SpectraApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Spectra Pro',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        brightness: Brightness.dark,
-        scaffoldBackgroundColor: AppColors.bg,
-        colorScheme: const ColorScheme.dark(
-          primary: AppColors.cyan,
-          secondary: AppColors.gold,
-          surface: AppColors.surface,
-        ),
-        fontFamily: 'Roboto',
-        appBarTheme: const AppBarTheme(
-          backgroundColor: AppColors.bg,
-          elevation: 0,
-          centerTitle: true,
-          titleTextStyle: TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w700,
-            color: AppColors.textPrim,
-            letterSpacing: 1.5,
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'Spectra Pro',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          brightness: Brightness.dark,
+          scaffoldBackgroundColor: C.bg,
+          colorScheme: const ColorScheme.dark(
+            primary: C.cyan,
+            secondary: C.gold,
+            surface: C.surface,
+          ),
+          fontFamily: 'Roboto',
+          sliderTheme: SliderThemeData(
+            activeTrackColor: C.cyan,
+            inactiveTrackColor: C.border,
+            thumbColor: C.cyan,
+            overlayColor: C.cyan.withOpacity(0.12),
+            trackHeight: 3,
+          ),
+          switchTheme: SwitchThemeData(
+            thumbColor: WidgetStateProperty.resolveWith(
+              (s) => s.contains(WidgetState.selected) ? C.cyan : C.tSec,
+            ),
+            trackColor: WidgetStateProperty.resolveWith(
+              (s) => s.contains(WidgetState.selected)
+                  ? C.cyan.withOpacity(0.35)
+                  : C.border,
+            ),
           ),
         ),
-        sliderTheme: SliderThemeData(
-          activeTrackColor: AppColors.cyan,
-          inactiveTrackColor: AppColors.border,
-          thumbColor: AppColors.cyan,
-          overlayColor: AppColors.cyan.withOpacity(0.15),
-        ),
-        switchTheme: SwitchThemeData(
-          thumbColor: WidgetStateProperty.resolveWith((s) =>
-              s.contains(WidgetState.selected)
-                  ? AppColors.cyan
-                  : AppColors.textSec),
-          trackColor: WidgetStateProperty.resolveWith((s) =>
-              s.contains(WidgetState.selected)
-                  ? AppColors.cyan.withOpacity(0.4)
-                  : AppColors.border),
-        ),
-      ),
-      home: const RootShell(),
-    );
-  }
+        home: const _Shell(),
+      );
 }
 
-// ─────────────────────────────────────────────
-//  ROOT SHELL
-// ─────────────────────────────────────────────
-class RootShell extends StatefulWidget {
-  const RootShell({super.key});
+// ──────────────────────────────────────────────
+// ROOT SHELL
+// ──────────────────────────────────────────────
+class _Shell extends StatefulWidget {
+  const _Shell();
+
   @override
-  State<RootShell> createState() => _RootShellState();
+  State<_Shell> createState() => _ShellState();
 }
 
-class _RootShellState extends State<RootShell>
+class _ShellState extends State<_Shell>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  // ── Tabs ──────────────────────────────────
+  // ── navigation ─────────────────────────────
   int _tab = 0;
-  late final PageController _pageCtrl;
+  late final PageController _pc;
 
-  // ── Subscription ─────────────────────────
-  SubscriptionTier _tier = SubscriptionTier.free;
+  // ── IAP ────────────────────────────────────
+  Tier _tier = Tier.free;
+  bool _iapReady = false;
+  bool _iapBuying = false;
+  final _iap = InAppPurchase.instance;
+  StreamSubscription<List<PurchaseDetails>>? _iapSub;
+  List<ProductDetails> _products = [];
 
-  // ── Sensor raw ────────────────────────────
-  static const int _histSz = 500;
-  final List<double> _magHist = List.filled(500, 50.0);
-  int _histIdx = 0;
-  double _magX = 0, _magY = 0, _magZ = 0;
-  double _magRaw = 50.0;
-  double _magFilt = 50.0;
-  double _baseline = 50.0;
-  double _magMin = 50.0, _magMax = 50.0;
-  double _signal = 0.0; // 0..100
+  // ── DSP constants ──────────────────────────
+  static const _HIST_SIZE = 300; // ring buffer length
+  static const _EMA_FAST = 0.15; // fast EMA (display smoothing)
+  static const _EMA_SLOW = 0.04; // slow EMA (baseline tracking)
+  static const _JUMP_THR = 25.0; // jump-noise suppressor
 
-  // ── Calibration ───────────────────────────
-  bool _calibrating = false;
-  bool _calibDone = false;
+  // ── raw sensor ─────────────────────────────
+  double _rawX = 0, _rawY = 0, _rawZ = 0;
+  double _rawMag = 0; // √(x²+y²+z²)
+
+  // ── filter chain ───────────────────────────
+  double _emaFast = 50; // display filter
+  double _emaSlow = 50; // baseline tracker
+  double _prevRaw = 50;
+
+  // ── calibration ────────────────────────────
+  final _calBuf = <double>[]; // filled during 10-s cal window
+  double _baseline = 50;
+  double _noiseFloor = 1.5; // 2 × stddev computed after cal
+  bool _caling = false;
+  bool _calDone = false;
+  int _calPct = 0;
+  String _calMsg = 'Waiting for sensor…';
+
+  // ── live metrics ───────────────────────────
+  double _signal = 0; // 0–100 normalised
+  double _mMin = 9999;
+  double _mMax = 0;
   bool _monitoring = false;
-  int _calibProgress = 0;
-  String _calibMsg = 'Başlatılıyor...';
 
-  // ── Detection ─────────────────────────────
-  bool _detected = false;
+  // ── ring buffer for waveform ───────────────
+  final _hist = List<double>.filled(_HIST_SIZE, 0.0);
+  int _hIdx = 0;
+
+  // ── detection state ─────────────────────────
+  bool _det = false;
   String _detType = 'none';
-  double _detConf = 0.0;
-  final List<Detection> _detections = [];
-  final List<MagReading> _readings = [];
+  double _detConf = 0;
   int _totalDet = 0;
+  final _detections = <DetectionEvent>[];
+  final _readings = <MagReading>[];
 
-  // ── DSP params ────────────────────────────
-  static const double _emaA = 0.10;
-  static const double _jumpThr = 30.0;
-
-  // ── Settings ──────────────────────────────
-  double _sensitivity = 8.0;
-  double _alertThr = 30.0;
-  double _strongThr = 70.0;
-  double _goldThr = 85.0;
-  bool _soundOn = true;
+  // ── alert config ────────────────────────────
+  double _sens = 6.0;
+  double _alertT = 20.0;
+  double _strongT = 55.0;
+  double _goldT = 78.0;
+  bool _sndOn = true;
   bool _vibOn = true;
-  bool _autoCalib = true;
+  bool _autoC = true;
 
-  // ── Audio ─────────────────────────────────
+  // ── audio ───────────────────────────────────
   final _audio = AudioPlayer();
   bool _beeping = false;
-  double _beepSpd = 1.0;
-  DateTime? _lastBeepUpd;
-  DateTime? _lastVib;
+  double _bSpd = 1.0;
+  DateTime? _lastBUpd, _lastVib;
 
-  // ── Animations ────────────────────────────
+  // ── animations ──────────────────────────────
   late AnimationController _pulseCtrl, _scanCtrl, _ringCtrl;
   late Animation<double> _pulseAnim, _scanAnim, _ringAnim;
 
-  // ── Session ───────────────────────────────
-  DateTime? _sessionStart;
-  int _dataPoints = 0;
+  // ── session ─────────────────────────────────
+  DateTime? _sessStart;
+  int _totalSamples = 0;
 
-  // ── Bluetooth (PRO) ───────────────────────
-  bool _btScanning = false;
-  bool _btConnected = false;
-  BluetoothDevice? _btDevice;
-  StreamSubscription<List<ScanResult>>? _btScanSub;
-  StreamSubscription<List<int>>? _btCharSub;
-  final List<ScanResult> _btResults = [];
-  BtSensorData? _btData;
-  String _btStatus = 'Bağlı değil';
+  // ── UI throttle ─────────────────────────────
+  Timer? _uiTimer;
+  bool _ready = false;
 
-  // ── Prefs ─────────────────────────────────
   late SharedPreferences _prefs;
   StreamSubscription<MagnetometerEvent>? _magSub;
-  Timer? _uiTimer;
-
-  bool _inited = false;
 
   // ════════════════════════════════════════════
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _pageCtrl = PageController();
-    _setupAnim();
-    _init();
+    _pc = PageController();
+    _setupAnims();
+    _boot();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState s) {
-    if (s == AppLifecycleState.paused) {
-      _magSub?.pause();
+    if (s == AppLifecycleState.paused) _magSub?.pause();
+    if (s == AppLifecycleState.resumed) _magSub?.resume();
+  }
+
+  // ── BOOT ────────────────────────────────────
+  Future<void> _boot() async {
+    Log.i('=== SPECTRA PRO v3.0 STARTING ===');
+    _prefs = await SharedPreferences.getInstance();
+    _loadPrefs();
+
+    _iapSub = _iap.purchaseStream.listen(
+      _onPurchase,
+      onError: (dynamic e) => Log.i('❌ IAP stream: $e'),
+    );
+    final avail = await _iap.isAvailable();
+    _iapReady = avail;
+    Log.i('IAP available: $avail');
+    if (avail) {
+      await _loadProducts();
+      await _iap.restorePurchases();
     }
-    if (s == AppLifecycleState.resumed) {
-      _magSub?.resume();
-    }
-  }
 
-  // ── Init ──────────────────────────────────
-  Future<void> _init() async {
-    try {
-      AppLog.log('=== SPECTRA PRO BAŞLATILIYOR ===');
-      _prefs = await SharedPreferences.getInstance();
-      _loadPrefs();
-      AppLog.log('✅ Ayarlar yüklendi');
-
-      await _initAudio();
-      AppLog.log('✅ Ses sistemi hazır');
-
-      _sessionStart = DateTime.now();
-      _startMag();
-      AppLog.log('✅ Manyetometre aktif');
-
-      if (mounted) setState(() => _inited = true);
-      await Future.delayed(const Duration(milliseconds: 300));
-      if (mounted) await _calibrate();
-      AppLog.log('=== BAŞLATMA TAMAMLANDI ===');
-    } catch (e) {
-      AppLog.log('❌ HATA: $e');
-    }
-  }
-
-  void _loadPrefs() {
-    _soundOn = _prefs.getBool('sound') ?? true;
-    _vibOn = _prefs.getBool('vib') ?? true;
-    _sensitivity = _prefs.getDouble('sens') ?? 8.0;
-    _alertThr = _prefs.getDouble('alert') ?? 30.0;
-    _strongThr = _prefs.getDouble('strong') ?? 70.0;
-    _goldThr = _prefs.getDouble('gold') ?? 85.0;
-    _autoCalib = _prefs.getBool('autocalib') ?? true;
-    final tierStr = _prefs.getString('tier') ?? 'free';
-    _tier = tierStr == 'pro' ? SubscriptionTier.pro : SubscriptionTier.free;
-  }
-
-  void _savePrefs() {
-    _prefs.setBool('sound', _soundOn);
-    _prefs.setBool('vib', _vibOn);
-    _prefs.setDouble('sens', _sensitivity);
-    _prefs.setDouble('alert', _alertThr);
-    _prefs.setDouble('strong', _strongThr);
-    _prefs.setDouble('gold', _goldThr);
-    _prefs.setBool('autocalib', _autoCalib);
-  }
-
-  // ── Animations ────────────────────────────
-  void _setupAnim() {
-    _pulseCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 1400))
-      ..repeat(reverse: true);
-    _pulseAnim = Tween<double>(begin: 0.88, end: 1.12).animate(
-        CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOutSine));
-
-    _scanCtrl =
-        AnimationController(vsync: this, duration: const Duration(seconds: 2))
-          ..repeat();
-    _scanAnim = Tween<double>(begin: 0, end: 1)
-        .animate(CurvedAnimation(parent: _scanCtrl, curve: Curves.linear));
-
-    _ringCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 800))
-      ..repeat(reverse: true);
-    _ringAnim = Tween<double>(begin: 0.3, end: 1.0)
-        .animate(CurvedAnimation(parent: _ringCtrl, curve: Curves.easeInOut));
-  }
-
-  // ── Audio ─────────────────────────────────
-  Future<void> _initAudio() async {
     try {
       await _audio.setAsset('assets/beep.mp3');
       await _audio.setLoopMode(LoopMode.one);
-      await _audio.setVolume(_soundOn ? 0.8 : 0.0);
+      await _audio.setVolume(_sndOn ? 0.85 : 0.0);
+      Log.i('✅ Audio ready');
     } catch (e) {
-      AppLog.log('⚠️ Ses: $e');
+      Log.i('⚠️ Audio init: $e');
+    }
+
+    _sessStart = DateTime.now();
+    _startMagnetometer();
+
+    if (mounted) setState(() => _ready = true);
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (mounted) await _runCalibration();
+    Log.i('=== BOOT COMPLETE ===');
+  }
+
+  void _loadPrefs() {
+    _sndOn = _prefs.getBool('snd') ?? true;
+    _vibOn = _prefs.getBool('vib') ?? true;
+    _sens = _prefs.getDouble('sens') ?? 6.0;
+    _alertT = _prefs.getDouble('alt') ?? 20.0;
+    _strongT = _prefs.getDouble('str') ?? 55.0;
+    _goldT = _prefs.getDouble('gld') ?? 78.0;
+    _autoC = _prefs.getBool('autoc') ?? true;
+    _tier =
+        (_prefs.getString('tier') ?? 'free') == 'pro' ? Tier.pro : Tier.free;
+    Log.i('Prefs loaded – tier=$_tier');
+  }
+
+  void _savePrefs() {
+    _prefs
+      ..setBool('snd', _sndOn)
+      ..setBool('vib', _vibOn)
+      ..setDouble('sens', _sens)
+      ..setDouble('alt', _alertT)
+      ..setDouble('str', _strongT)
+      ..setDouble('gld', _goldT)
+      ..setBool('autoc', _autoC);
+  }
+
+  // ── IAP ─────────────────────────────────────
+  Future<void> _loadProducts() async {
+    try {
+      final res = await _iap.queryProductDetails(IAP.ids);
+      if (res.error != null) Log.i('⚠️ IAP query error: ${res.error}');
+      if (res.notFoundIDs.isNotEmpty) Log.i('⚠️ Not found: ${res.notFoundIDs}');
+      _products = res.productDetails;
+      Log.i(
+          'Products: ${_products.map((p) => "${p.id}:${p.price}").join(", ")}');
+    } catch (e) {
+      Log.i('❌ _loadProducts: $e');
     }
   }
 
-  // ── Magnetometer ─────────────────────────
-  void _startMag() {
-    _magSub?.cancel();
-    _magSub = magnetometerEventStream(samplingPeriod: SensorInterval.uiInterval)
-        .listen((e) {
-      _magX = e.x;
-      _magY = e.y;
-      _magZ = e.z;
-      _magRaw = sqrt(e.x * e.x + e.y * e.y + e.z * e.z);
-
-      final diff = (_magRaw - _magFilt).abs();
-      if (diff > _jumpThr) {
-        _magFilt += (_magRaw - _magFilt) * 0.05;
-      } else {
-        _magFilt = _emaA * _magRaw + (1 - _emaA) * _magFilt;
-      }
-
-      _magHist[_histIdx] = _magFilt;
-      _histIdx = (_histIdx + 1) % _histSz;
-      _dataPoints++;
-
-      if (_calibDone && !_calibrating) {
-        if (_magFilt < _magMin) _magMin = _magFilt;
-        if (_magFilt > _magMax) _magMax = _magFilt;
-
-        final dev = (_magFilt - _baseline).abs();
-        _signal = (dev * _sensitivity * 0.85).clamp(0.0, 100.0);
-
-        _classifyMetal();
-        _doFeedback();
-
-        if (_monitoring) {
-          _readings.add(MagReading(
-              ts: DateTime.now(),
-              x: _magX,
-              y: _magY,
-              z: _magZ,
-              magnitude: _magRaw,
-              fieldStrength: _signal));
-          if (_readings.length > 3000) _readings.removeAt(0);
+  Future<void> _onPurchase(List<PurchaseDetails> purchases) async {
+    for (final p in purchases) {
+      Log.i('🛒 Purchase: ${p.productID} status=${p.status}');
+      if (p.status == PurchaseStatus.purchased ||
+          p.status == PurchaseStatus.restored) {
+        _grantPro(p.productID);
+        await _iap.completePurchase(p);
+      } else if (p.status == PurchaseStatus.error) {
+        if (mounted) {
+          setState(() => _iapBuying = false);
+          _snack('Purchase failed: ${p.error?.message}', C.red);
         }
+        await _iap.completePurchase(p);
+      } else if (p.status == PurchaseStatus.canceled) {
+        if (mounted) setState(() => _iapBuying = false);
       }
-      _scheduleUI();
-    }, onError: (err) {
-      AppLog.log('❌ Sensör hatası: $err');
-      if (mounted)
-        setState(() {
-          _calibMsg = 'Sensör Hatası';
-        });
-    });
+    }
   }
 
-  // ── Calibration ──────────────────────────
-  Future<void> _calibrate() async {
-    if (_calibrating) return;
-    AppLog.log('🔄 Kalibrasyon başladı');
+  void _grantPro(String productId) {
+    Log.i('✅ PRO granted via $productId');
+    if (!mounted) return;
+    setState(() {
+      _tier = Tier.pro;
+      _iapBuying = false;
+    });
+    _prefs.setString('tier', 'pro');
+    _snack('🎉 PRO activated! All features unlocked.', C.gold);
+  }
+
+  Future<void> _buyProduct(ProductDetails pd) async {
+    setState(() => _iapBuying = true);
+    try {
+      final ok = await _iap.buyNonConsumable(
+        purchaseParam: PurchaseParam(productDetails: pd),
+      );
+      if (!ok && mounted) setState(() => _iapBuying = false);
+    } catch (e) {
+      Log.i('❌ buyProduct: $e');
+      if (mounted) setState(() => _iapBuying = false);
+    }
+  }
+
+  Future<void> _restorePurchases() async {
+    setState(() => _iapBuying = true);
+    await _iap.restorePurchases();
+    await Future.delayed(const Duration(seconds: 4));
+    if (mounted) setState(() => _iapBuying = false);
+  }
+
+  ProductDetails? _pd(String id) {
+    try {
+      return _products.firstWhere((p) => p.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── ANIMATIONS ──────────────────────────────
+  void _setupAnims() {
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween(begin: 0.92, end: 1.08).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOutSine),
+    );
+
+    _scanCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat();
+    _scanAnim = Tween(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _scanCtrl, curve: Curves.linear),
+    );
+
+    _ringCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+    _ringAnim = Tween(begin: 0.4, end: 1.0).animate(
+      CurvedAnimation(parent: _ringCtrl, curve: Curves.easeInOut),
+    );
+  }
+
+  // ── MAGNETOMETER (REAL SENSOR) ───────────────
+  void _startMagnetometer() {
+    _magSub?.cancel();
+    _magSub = magnetometerEventStream(
+      samplingPeriod: SensorInterval.uiInterval, // ~60 Hz
+    ).listen(
+      _onMagEvent,
+      onError: (dynamic err) {
+        Log.i('❌ Sensor: $err');
+        if (mounted) setState(() => _calMsg = 'Sensor Error');
+      },
+    );
+  }
+
+  void _onMagEvent(MagnetometerEvent e) {
+    _rawX = e.x;
+    _rawY = e.y;
+    _rawZ = e.z;
+    _rawMag = sqrt(e.x * e.x + e.y * e.y + e.z * e.z);
+    _totalSamples++;
+
+    // Jump-noise suppression: large transients slow-track to avoid spikes
+    final diff = (_rawMag - _prevRaw).abs();
+    final weight = diff > _JUMP_THR ? 0.03 : _EMA_FAST;
+    _emaFast = weight * _rawMag + (1 - weight) * _emaFast;
+    _prevRaw = _rawMag;
+
+    // Collect calibration samples
+    if (_caling) {
+      _calBuf.add(_rawMag);
+    }
+
+    if (_calDone && _monitoring) {
+      // Slow baseline drift tracker (very slow – ignores detections)
+      if (_signal < _alertT * 0.5) {
+        _emaSlow = _EMA_SLOW * _rawMag + (1 - _EMA_SLOW) * _emaSlow;
+      }
+
+      // Deviation from baseline → normalised signal 0–100
+      final dev = (_emaFast - _baseline).abs();
+      _signal = (dev / _noiseFloor * _sens * 1.2).clamp(0, 100);
+
+      if (_emaFast < _mMin) _mMin = _emaFast;
+      if (_emaFast > _mMax) _mMax = _emaFast;
+
+      // Ring buffer
+      _hist[_hIdx] = _emaFast;
+      _hIdx = (_hIdx + 1) % _HIST_SIZE;
+
+      // Record for export
+      _readings.add(MagReading(
+        ts: DateTime.now(),
+        x: _rawX,
+        y: _rawY,
+        z: _rawZ,
+        raw: _rawMag,
+        signal: _signal,
+      ));
+      if (_readings.length > 5000) _readings.removeAt(0);
+
+      _classify();
+      _feedback();
+    }
+
+    _schedUI();
+  }
+
+  // ── CALIBRATION ─────────────────────────────
+  Future<void> _runCalibration() async {
+    if (_caling) return;
+    Log.i('🔄 Calibration start');
+
     if (mounted)
       setState(() {
-        _calibrating = true;
-        _calibDone = false;
-        _calibProgress = 0;
-        _calibMsg = 'Kalibre ediliyor...';
-        _magHist.fillRange(0, _histSz, 50.0);
-        _histIdx = 0;
-        _magFilt = 50.0;
-        _detected = false;
-        _audio.stop();
+        _caling = true;
+        _calDone = false;
+        _calPct = 0;
+        _calMsg = 'Hold still – calibrating…';
+        _monitoring = false;
+        _det = false;
         _beeping = false;
+        _signal = 0;
+        _calBuf.clear();
+        _hist.fillRange(0, _HIST_SIZE, 0.0);
+        _hIdx = 0;
+        _mMin = 9999;
+        _mMax = 0;
       });
+    _audio.stop();
 
+    // 10-second window collecting raw samples
     for (int i = 0; i < 10; i++) {
       if (!mounted) return;
       await Future.delayed(const Duration(seconds: 1));
       if (mounted)
         setState(() {
-          _calibProgress = ((i + 1) / 10 * 100).toInt();
-          _calibMsg = 'Kalibre ediliyor... ${i + 1}/10s';
+          _calPct = ((i + 1) * 10);
+          _calMsg = 'Calibrating… ${i + 1}/10s';
         });
     }
 
     _computeBaseline();
+
     if (mounted)
       setState(() {
-        _calibrating = false;
-        _calibDone = true;
+        _caling = false;
+        _calDone = true;
         _monitoring = true;
-        _calibProgress = 100;
-        _calibMsg = '✔ Hazır – İzleniyor';
+        _calPct = 100;
+        _calMsg = 'Calibrated – Active monitoring';
       });
-    AppLog.log('✅ Kalibrasyon bitti – Baz: ${_baseline.toStringAsFixed(2)} µT');
+    Log.i('✅ Cal done baseline=${_baseline.toStringAsFixed(2)} '
+        'noise=${_noiseFloor.toStringAsFixed(2)}');
   }
 
   void _computeBaseline() {
-    final vals = <double>[];
-    final start = _histSz ~/ 4;
-    for (int i = start; i < _histSz; i++) {
-      final v = _magHist[(i + _histIdx) % _histSz];
-      if (v > 10 && v < 130) vals.add(v);
-    }
-    if (vals.isEmpty) {
-      _baseline = 48.0;
+    if (_calBuf.isEmpty) {
+      _baseline = _rawMag.isFinite ? _rawMag : 50;
+      _noiseFloor = 2.0;
       return;
     }
-    vals.sort();
-    final q1 = vals[(vals.length * 0.25).toInt()];
-    final q3 = vals[(vals.length * 0.75).toInt()];
+
+    final sorted = List<double>.from(_calBuf)..sort();
+    final q1 = sorted[(sorted.length * 0.25).toInt()];
+    final q3 = sorted[(sorted.length * 0.75).toInt()];
     final iqr = q3 - q1;
-    final filt =
-        vals.where((v) => v >= q1 - 1.5 * iqr && v <= q3 + 1.5 * iqr).toList();
-    _baseline = (filt.isNotEmpty ? filt : vals).reduce((a, b) => a + b) /
-        (filt.isNotEmpty ? filt.length : vals.length);
-    _magFilt = _baseline;
-    _magMin = _baseline;
-    _magMax = _baseline;
+    final fence = iqr * 1.5;
+    final clean =
+        sorted.where((v) => v >= q1 - fence && v <= q3 + fence).toList();
+    final src = clean.isNotEmpty ? clean : sorted;
+
+    _baseline = src.reduce((a, b) => a + b) / src.length;
+
+    // Noise floor = 2 × standard deviation of the clean window
+    final variance =
+        src.map((v) => pow(v - _baseline, 2)).reduce((a, b) => a + b) /
+            src.length;
+    _noiseFloor = max(1.0, 2.0 * sqrt(variance));
+
+    _emaFast = _baseline;
+    _emaSlow = _baseline;
+    _mMin = _baseline;
+    _mMax = _baseline;
+    _calBuf.clear();
   }
 
-  // ── Metal Classification ──────────────────
-  void _classifyMetal() {
-    if (_signal > _alertThr) {
-      // PRO: gold detection uses dedicated threshold + BT data
-      if (_tier == SubscriptionTier.pro && _signal > _goldThr) {
+  // ── CLASSIFICATION ───────────────────────────
+  void _classify() {
+    if (_signal > _alertT) {
+      if (_tier == Tier.pro && _signal > _goldT) {
         _detType = 'gold';
-        _detConf = _computeGoldConfidence();
-      } else if (_signal > _strongThr) {
+        _detConf = _calcGoldConf();
+      } else if (_signal > _strongT) {
         _detType = 'ferrous';
-        _detConf = 0.93 + (_signal - _strongThr) * 0.001;
+        _detConf = (0.91 + (_signal - _strongT) * 0.0015).clamp(0, 0.99);
       } else {
         _detType = 'nonferrous';
-        _detConf = 0.72 + (_signal - _alertThr) * 0.003;
+        _detConf = (0.68 + (_signal - _alertT) * 0.004).clamp(0, 0.99);
       }
-      _detConf = _detConf.clamp(0.0, 0.99);
 
-      if (!_detected) {
+      if (!_det) {
         _totalDet++;
-        _detected = true;
-        _detections.add(Detection(
+        _det = true;
+        _detections.add(DetectionEvent(
           ts: DateTime.now(),
           type: _detType,
-          confidence: _detConf,
+          conf: _detConf,
           signal: _signal,
           label: _detLabel(),
           color: _detColor(_detType),
+          icon: _detIcon(_detType),
         ));
-        if (_detections.length > 300) _detections.removeAt(0);
-        AppLog.log(
-            '🔴 Tespit: $_detType  |  Sinyal: ${_signal.toStringAsFixed(1)}  |  Güven: ${(_detConf * 100).toStringAsFixed(0)}%');
+        if (_detections.length > 500) _detections.removeAt(0);
+        Log.i('🔴 $_detType sig=${_signal.toStringAsFixed(1)} '
+            'conf=${(_detConf * 100).toStringAsFixed(0)}%');
       }
-    } else if (_detected) {
-      _detected = false;
+    } else if (_det) {
+      _det = false;
       _detType = 'none';
-      _detConf = 0.0;
+      _detConf = 0;
     }
   }
 
-  // Gold confidence uses field gradient analysis (PRO)
-  double _computeGoldConfidence() {
-    // Altın non-ferrous + yüksek sinyal + BT referans varsa ekstra puan
-    double base = 0.78;
-    if (_btConnected && _btData != null) {
-      final btMatch = (_btData!.signal - _signal).abs() < 15;
-      if (btMatch) base += 0.12;
-    }
-    // Gradyan stabilitesi
-    final recent = <double>[];
-    for (int i = 0; i < 20; i++) {
-      recent.add(_magHist[(_histIdx - 1 - i + _histSz) % _histSz]);
-    }
-    final variance = _variance(recent);
-    if (variance < 5) base += 0.06; // Stabil alan = altın benzeri
-    return base.clamp(0, 0.99);
+  double _calcGoldConf() {
+    // Stability bonus: very stable field → more likely genuine
+    final recent = List.generate(
+      25,
+      (i) => _hist[(_hIdx - 1 - i + _HIST_SIZE) % _HIST_SIZE],
+    );
+    final mean = recent.reduce((a, b) => a + b) / recent.length;
+    final variance =
+        recent.map((v) => (v - mean) * (v - mean)).reduce((a, b) => a + b) /
+            recent.length;
+    double conf = 0.80;
+    if (variance < 3) conf += 0.08;
+    if (_signal > _goldT + 10) conf += 0.06;
+    return conf.clamp(0, 0.99);
   }
 
-  double _variance(List<double> d) {
-    if (d.isEmpty) return 0;
-    final mean = d.reduce((a, b) => a + b) / d.length;
-    return d.map((v) => (v - mean) * (v - mean)).reduce((a, b) => a + b) /
-        d.length;
-  }
+  String _detLabel() => switch (_detType) {
+        'gold' => 'GOLD DETECTED',
+        'ferrous' => 'Iron / Steel',
+        'nonferrous' => 'Non-Ferrous Metal',
+        _ => 'Signal',
+      };
 
-  String _detLabel() {
-    switch (_detType) {
-      case 'gold':
-        return 'ALTIN TESPİT EDİLDİ ✦';
-      case 'ferrous':
-        return 'Demir / Çelik';
-      case 'nonferrous':
-        return 'Demir Dışı Metal';
-      default:
-        return 'Sinyal';
-    }
-  }
+  Color _detColor(String t) => switch (t) {
+        'gold' => C.gold,
+        'ferrous' => C.red,
+        'nonferrous' => C.orange,
+        _ => C.tSec,
+      };
 
-  Color _detColor(String t) {
-    switch (t) {
-      case 'gold':
-        return AppColors.gold;
-      case 'ferrous':
-        return AppColors.red;
-      case 'nonferrous':
-        return AppColors.orange;
-      default:
-        return AppColors.textSec;
-    }
-  }
+  IconData _detIcon(String t) => switch (t) {
+        'gold' => Icons.star_rounded,
+        'ferrous' => Icons.bolt_rounded,
+        'nonferrous' => Icons.radio_button_checked_rounded,
+        _ => Icons.circle_outlined,
+      };
 
-  // ── Feedback ──────────────────────────────
-  void _doFeedback() {
-    if (_signal > _alertThr) {
-      if (_soundOn) {
-        final spd = (0.5 + (_signal / 100) * 2.0).clamp(0.5, 2.5);
+  // ── AUDIO / HAPTIC FEEDBACK ──────────────────
+  void _feedback() {
+    if (_signal > _alertT) {
+      if (_sndOn) {
+        final spd = (0.5 + (_signal / 100) * 2.2).clamp(0.5, 2.5);
         if (!_beeping) {
           _audio.play();
           _beeping = true;
         }
         final now = DateTime.now();
-        if (_lastBeepUpd == null ||
-            now.difference(_lastBeepUpd!).inMilliseconds > 100) {
-          if ((spd - _beepSpd).abs() > 0.1) {
+        if (_lastBUpd == null ||
+            now.difference(_lastBUpd!).inMilliseconds > 80) {
+          if ((spd - _bSpd).abs() > 0.08) {
             _audio.setSpeed(spd);
-            _beepSpd = spd;
+            _bSpd = spd;
           }
-          _lastBeepUpd = now;
+          _lastBUpd = now;
         }
       }
       if (_vibOn) {
         final now = DateTime.now();
-        final gap =
-            _detType == 'gold' ? 200 : (_signal > _strongThr ? 280 : 400);
+        final gap = _detType == 'gold' ? 180 : (_signal > _strongT ? 260 : 380);
         if (_lastVib == null ||
             now.difference(_lastVib!).inMilliseconds > gap) {
           try {
             Vibration.vibrate(
               duration:
-                  _detType == 'gold' ? 300 : (_signal > _strongThr ? 220 : 130),
+                  _detType == 'gold' ? 320 : (_signal > _strongT ? 200 : 120),
               amplitude:
-                  _detType == 'gold' ? 255 : (_signal > _strongThr ? 230 : 150),
+                  _detType == 'gold' ? 255 : (_signal > _strongT ? 220 : 140),
             );
           } catch (_) {}
           _lastVib = now;
@@ -605,584 +727,537 @@ class _RootShellState extends State<RootShell>
     } else if (_beeping) {
       _audio.stop();
       _beeping = false;
-      _beepSpd = 1.0;
+      _bSpd = 1.0;
     }
   }
 
-  void _scheduleUI() {
+  void _schedUI() {
     _uiTimer?.cancel();
-    _uiTimer = Timer(const Duration(milliseconds: 66), () {
+    _uiTimer = Timer(const Duration(milliseconds: 50), () {
       if (mounted) setState(() {});
     });
   }
 
-  // ── Bluetooth (PRO) ──────────────────────
-  Future<void> _startBtScan() async {
-    if (_tier != SubscriptionTier.pro) {
-      _showProWall();
-      return;
+  // ── PRO WALL ────────────────────────────────
+  void _showProWall() => showModalBottomSheet(
+        context: context,
+        backgroundColor: C.card,
+        isScrollControlled: true,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+        ),
+        builder: (_) => _ProSheet(
+          annual: _pd(IAP.annual),
+          monthly: _pd(IAP.monthly),
+          busy: _iapBuying,
+          iapReady: _iapReady,
+          onBuyAnnual: () {
+            Navigator.pop(context);
+            final p = _pd(IAP.annual);
+            if (p != null)
+              _buyProduct(p);
+            else
+              _noProducts();
+          },
+          onBuyMonthly: () {
+            Navigator.pop(context);
+            final p = _pd(IAP.monthly);
+            if (p != null)
+              _buyProduct(p);
+            else
+              _noProducts();
+          },
+          onRestore: () {
+            Navigator.pop(context);
+            _restorePurchases();
+          },
+        ),
+      );
+
+  void _noProducts() => showDialog(
+        context: context,
+        builder: (_) => AlertDialog(
+          backgroundColor: C.card,
+          title:
+              const Text('Store Unavailable', style: TextStyle(color: C.tPrim)),
+          content: const Text(
+            'Cannot load products from Google Play.\nCheck your internet connection.',
+            style: TextStyle(color: C.tSec),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK', style: TextStyle(color: C.cyan)),
+            ),
+          ],
+        ),
+      );
+
+  // ── HELPERS ─────────────────────────────────
+  Color get _sigCol {
+    if (_signal > _goldT && _tier == Tier.pro) return C.gold;
+    if (_signal > _strongT) return C.red;
+    if (_signal > _alertT) return C.orange;
+    if (_signal > _alertT * 0.4) return C.cyan;
+    return C.green;
+  }
+
+  String get _statusLbl {
+    if (_caling) return _calMsg;
+    if (!_calDone) return 'Starting…';
+    if (_det) {
+      return switch (_detType) {
+        'gold' => '⚡ GOLD DETECTED',
+        'ferrous' => '● FERROUS METAL',
+        'nonferrous' => '◆ METAL DETECTED',
+        _ => '◆ SIGNAL',
+      };
     }
-    final stat = await Permission.bluetoothScan.request();
-    if (!stat.isGranted) return;
-    await Permission.bluetoothConnect.request();
-    await Permission.location.request();
-
-    if (mounted)
-      setState(() {
-        _btScanning = true;
-        _btResults.clear();
-      });
-    AppLog.log('🔵 Bluetooth tarama başladı');
-
-    try {
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 12));
-      _btScanSub = FlutterBluePlus.scanResults.listen((results) {
-        if (mounted)
-          setState(() {
-            _btResults.clear();
-            _btResults.addAll(results);
-          });
-      });
-      await Future.delayed(const Duration(seconds: 12));
-    } catch (e) {
-      AppLog.log('❌ BT tarama: $e');
-    }
-    if (mounted) setState(() => _btScanning = false);
+    return _monitoring ? '● Scanning Active' : '❚❚ Paused';
   }
 
-  Future<void> _connectBt(BluetoothDevice device) async {
-    try {
-      AppLog.log('🔵 Bağlanıyor: ${device.platformName}');
-      await device.connect(timeout: const Duration(seconds: 10));
-      if (mounted)
-        setState(() {
-          _btDevice = device;
-          _btConnected = true;
-          _btStatus = '${device.platformName} bağlı';
-        });
-
-      final services = await device.discoverServices();
-      for (final svc in services) {
-        for (final char in svc.characteristics) {
-          if (char.properties.notify || char.properties.read) {
-            await char.setNotifyValue(true);
-            _btCharSub = char.onValueReceived.listen(_parseBtData);
-            AppLog.log('✅ BT karakteristiği dinleniyor');
-          }
-        }
-      }
-    } catch (e) {
-      AppLog.log('❌ BT bağlantı hatası: $e');
-      if (mounted)
-        setState(() {
-          _btConnected = false;
-          _btStatus = 'Bağlantı hatası';
-        });
-    }
+  void _snack(String msg, Color bg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: bg,
+      duration: const Duration(seconds: 4),
+    ));
   }
 
-  void _parseBtData(List<int> raw) {
-    try {
-      final str = utf8.decode(raw);
-      // Protocol: "MAG:xx.x,SIG:yy.y" ya da sadece sayısal
-      double? mag, sig;
-      if (str.contains('MAG:')) {
-        final parts = str.split(',');
-        for (final p in parts) {
-          if (p.startsWith('MAG:')) mag = double.tryParse(p.substring(4));
-          if (p.startsWith('SIG:')) sig = double.tryParse(p.substring(4));
-        }
-      } else {
-        final v = double.tryParse(str.trim());
-        if (v != null) {
-          mag = v;
-          sig = (v - _baseline).abs() * _sensitivity * 0.85;
-        }
-      }
-      if (mag != null) {
-        if (mounted)
-          setState(() {
-            _btData = BtSensorData(
-              magnitude: mag!,
-              signal: sig ?? 0,
-              raw: str,
-            );
-          });
-        AppLog.log('🔵 BT veri: $str');
-      }
-    } catch (e) {
-      AppLog.log('⚠️ BT parse: $e');
-    }
-  }
-
-  Future<void> _disconnectBt() async {
-    _btCharSub?.cancel();
-    _btScanSub?.cancel();
-    await _btDevice?.disconnect();
-    if (mounted)
-      setState(() {
-        _btConnected = false;
-        _btDevice = null;
-        _btData = null;
-        _btStatus = 'Bağlı değil';
-      });
-    AppLog.log('🔵 Bluetooth bağlantısı kesildi');
-  }
-
-  // ── PRO Upgrade Wall ─────────────────────
-  void _showProWall() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: AppColors.card,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-      builder: (_) => _ProUpgradeSheet(onUpgrade: () {
-        setState(() {
-          _tier = SubscriptionTier.pro;
-          _prefs.setString('tier', 'pro');
-        });
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('🎉 PRO aktif! Tüm özellikler açıldı.'),
-          backgroundColor: AppColors.gold,
-        ));
-      }),
-    );
-  }
-
-  // ── Helpers ───────────────────────────────
-  Color get _sigColor {
-    if (_signal > _goldThr && _tier == SubscriptionTier.pro)
-      return AppColors.gold;
-    if (_signal > _strongThr) return AppColors.red;
-    if (_signal > _alertThr) return AppColors.orange;
-    if (_signal > _alertThr * 0.5) return AppColors.cyan.withOpacity(0.7);
-    return AppColors.green;
-  }
-
-  String get _statusLabel {
-    if (_calibrating) return _calibMsg;
-    if (!_calibDone) return 'Başlatılıyor...';
-    if (_detected) {
-      if (_detType == 'gold') return '⚡ ALTIN TESPİT EDİLDİ';
-      if (_detType == 'ferrous') return '🔴 DEMİR METAL';
-      return '🟠 METAL TESPİT';
-    }
-    return '🟢 Tarama Aktif';
-  }
-
-  // ── Dispose ───────────────────────────────
+  // ── DISPOSE ─────────────────────────────────
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _magSub?.cancel();
-    _btScanSub?.cancel();
-    _btCharSub?.cancel();
+    _iapSub?.cancel();
     _uiTimer?.cancel();
     _audio.dispose();
     _pulseCtrl.dispose();
     _scanCtrl.dispose();
     _ringCtrl.dispose();
-    _pageCtrl.dispose();
+    _pc.dispose();
     super.dispose();
   }
 
   // ════════════════════════════════════════════
-  //  BUILD
+  // BUILD
   // ════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    if (!_inited) return _Splash();
+    if (!_ready) return const _Splash();
 
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: C.bg,
       extendBody: true,
-      body: PageView(
-        controller: _pageCtrl,
-        physics: const NeverScrollableScrollPhysics(),
-        children: [
-          _ScannerPage(s: this),
-          _AnalyticsPage(s: this),
-          _tier == SubscriptionTier.pro
-              ? _BluetoothPage(s: this)
-              : _ProLockPage(
-                  onUnlock: _showProWall, featureName: 'Bluetooth Sensör'),
-          _SettingsPage(s: this),
-          _DebugPage(),
-        ],
-      ),
-      bottomNavigationBar: _BottomBar(
-        current: _tab,
-        isPro: _tier == SubscriptionTier.pro,
+      body: Stack(children: [
+        PageView(
+          controller: _pc,
+          physics: const NeverScrollableScrollPhysics(),
+          children: [
+            _ScanPage(s: this),
+            _AnalyticsPage(s: this),
+            _SettingsPage(s: this),
+            _DebugPage(s: this),
+          ],
+        ),
+        if (_iapBuying)
+          Container(
+            color: Colors.black54,
+            child: const Center(
+                child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(color: C.gold),
+                SizedBox(height: 16),
+                Text('Processing purchase…', style: TextStyle(color: C.tPrim)),
+              ],
+            )),
+          ),
+      ]),
+      bottomNavigationBar: _NavBar(
+        tab: _tab,
+        isPro: _tier == Tier.pro,
         onTap: (i) {
           setState(() => _tab = i);
-          _pageCtrl.jumpToPage(i);
+          _pc.jumpToPage(i);
         },
       ),
     );
   }
 }
 
-// ─────────────────────────────────────────────
-//  SPLASH
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// SPLASH
+// ──────────────────────────────────────────────
 class _Splash extends StatelessWidget {
+  const _Splash();
+
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.bg,
-      body: Center(
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Container(
-          width: 80,
-          height: 80,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            border: Border.all(color: AppColors.cyan, width: 2),
-          ),
-          child: const Icon(Icons.radar, color: AppColors.cyan, size: 40),
-        ),
-        const SizedBox(height: 24),
-        const Text('SPECTRA PRO',
-            style: TextStyle(
-              color: AppColors.textPrim,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 4,
-            )),
-        const SizedBox(height: 8),
-        const Text('Profesyonel Metal Dedektör',
-            style: TextStyle(
-              color: AppColors.textSec,
-              fontSize: 13,
-              letterSpacing: 1,
-            )),
-        const SizedBox(height: 40),
-        SizedBox(
-          width: 180,
-          child: LinearProgressIndicator(
-            backgroundColor: AppColors.border,
-            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.cyan),
-          ),
-        ),
-      ])),
-    );
-  }
+  Widget build(BuildContext ctx) => Scaffold(
+        backgroundColor: C.bg,
+        body: Center(
+            child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Container(
+              width: 88,
+              height: 88,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(color: C.cyan, width: 1.5),
+                color: C.cyan.withOpacity(0.07),
+              ),
+              child: const Icon(Icons.radar_rounded, color: C.cyan, size: 44),
+            ),
+            const SizedBox(height: 28),
+            const Text(
+              'SPECTRA PRO',
+              style: TextStyle(
+                color: C.tPrim,
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 5,
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Professional Metal Detector',
+              style: TextStyle(color: C.tSec, fontSize: 12, letterSpacing: 1.5),
+            ),
+            const SizedBox(height: 48),
+            const SizedBox(
+              width: 160,
+              child: LinearProgressIndicator(
+                backgroundColor: C.border,
+                valueColor: AlwaysStoppedAnimation<Color>(C.cyan),
+                minHeight: 2,
+              ),
+            ),
+          ],
+        )),
+      );
 }
 
-// ─────────────────────────────────────────────
-//  BOTTOM BAR
-// ─────────────────────────────────────────────
-class _BottomBar extends StatelessWidget {
-  final int current;
+// ──────────────────────────────────────────────
+// BOTTOM NAV
+// ──────────────────────────────────────────────
+class _NavBar extends StatelessWidget {
+  final int tab;
   final bool isPro;
   final ValueChanged<int> onTap;
-  const _BottomBar(
-      {required this.current, required this.isPro, required this.onTap});
+
+  const _NavBar({required this.tab, required this.isPro, required this.onTap});
 
   @override
-  Widget build(BuildContext context) {
-    final items = [
-      (Icons.radar_rounded, 'Tarayıcı', false),
-      (Icons.analytics_rounded, 'Analitik', false),
-      (Icons.bluetooth_rounded, 'Bluetooth', true),
-      (Icons.settings_rounded, 'Ayarlar', false),
+  Widget build(BuildContext ctx) {
+    const items = [
+      (Icons.radar_rounded, 'Scanner', false),
+      (Icons.analytics_rounded, 'Analytics', false),
+      (Icons.settings_rounded, 'Settings', false),
       (Icons.bug_report_rounded, 'Debug', false),
     ];
+
     return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        border: Border(top: BorderSide(color: AppColors.border, width: 0.5)),
+      decoration: const BoxDecoration(
+        color: C.surface,
+        border: Border(top: BorderSide(color: C.border, width: .5)),
       ),
       child: SafeArea(
         top: false,
         child: Row(
-            children: List.generate(items.length, (i) {
-          final (icon, label, isPro_) = items[i];
-          final sel = current == i;
-          final locked = isPro_ && !isPro;
-          return Expanded(
+          children: List.generate(items.length, (i) {
+            final (icon, lbl, _) = items[i];
+            final sel = tab == i;
+            return Expanded(
               child: InkWell(
-            onTap: () => onTap(i),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                Stack(clipBehavior: Clip.none, children: [
-                  Icon(
-                    icon,
-                    color: sel ? AppColors.cyan : AppColors.textDim,
-                    size: 22,
-                  ),
-                  if (locked)
-                    Positioned(
-                      right: -4,
-                      top: -4,
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                            color: AppColors.gold, shape: BoxShape.circle),
+                onTap: () => onTap(i),
+                splashColor: C.cyan.withOpacity(0.08),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: sel
+                              ? C.cyan.withOpacity(0.12)
+                              : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Icon(
+                          icon,
+                          color: sel ? C.cyan : C.tDim,
+                          size: 20,
+                        ),
                       ),
-                    ),
-                ]),
-                const SizedBox(height: 3),
-                Text(label,
-                    style: TextStyle(
-                      fontSize: 9.5,
-                      color: sel ? AppColors.cyan : AppColors.textDim,
-                      fontWeight: sel ? FontWeight.w600 : FontWeight.w400,
-                      letterSpacing: 0.3,
-                    )),
-              ]),
-            ),
-          ));
-        })),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────
-//  SCANNER PAGE
-// ─────────────────────────────────────────────
-class _ScannerPage extends StatelessWidget {
-  final _RootShellState s;
-  const _ScannerPage({required this.s});
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-        child: Column(children: [
-          // Header
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('SPECTRA PRO',
-                  style: TextStyle(
-                    color: AppColors.cyan,
-                    fontSize: 11,
-                    letterSpacing: 3,
-                    fontWeight: FontWeight.w600,
-                  )),
-              Text(s._statusLabel,
-                  style: TextStyle(
-                    color: s._sigColor,
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                  )),
-            ]),
-            if (s._tier == SubscriptionTier.pro)
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.gold.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.5)),
-                ),
-                child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(Icons.star, color: AppColors.gold, size: 12),
-                  SizedBox(width: 4),
-                  Text('PRO',
-                      style: TextStyle(
-                        color: AppColors.gold,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1,
-                      )),
-                ]),
-              )
-            else
-              GestureDetector(
-                onTap: s._showProWall,
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: AppColors.border,
-                    borderRadius: BorderRadius.circular(20),
+                      const SizedBox(height: 2),
+                      Text(lbl,
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            color: sel ? C.cyan : C.tDim,
+                            fontWeight: sel ? FontWeight.w700 : FontWeight.w400,
+                            letterSpacing: .3,
+                          )),
+                    ],
                   ),
-                  child: const Text('PRO\'ya Geç ↗',
-                      style: TextStyle(
-                        color: AppColors.textSec,
-                        fontSize: 11,
-                      )),
                 ),
               ),
-          ]),
-
-          const SizedBox(height: 24),
-
-          // Main gauge
-          _GaugeWidget(s: s),
-
-          const SizedBox(height: 24),
-
-          // Status strip
-          _StatusStrip(s: s),
-
-          const SizedBox(height: 16),
-
-          // BT data strip (PRO)
-          if (s._tier == SubscriptionTier.pro &&
-              s._btConnected &&
-              s._btData != null)
-            _BtDataStrip(s: s),
-
-          if (s._tier == SubscriptionTier.pro &&
-              s._btConnected &&
-              s._btData != null)
-            const SizedBox(height: 16),
-
-          // Metrics
-          _MetricsGrid(s: s),
-
-          const SizedBox(height: 16),
-
-          // Waveform
-          _Waveform(s: s),
-
-          const SizedBox(height: 16),
-
-          // Axis bars
-          _AxisBars(s: s),
-
-          const SizedBox(height: 16),
-
-          // Buttons
-          _ActionRow(s: s),
-        ]),
+            );
+          }),
+        ),
       ),
     );
   }
 }
 
-// ── Gauge ─────────────────────────────────────
-class _GaugeWidget extends StatelessWidget {
-  final _RootShellState s;
-  const _GaugeWidget({required this.s});
+// ──────────────────────────────────────────────
+// SCANNER PAGE
+// ──────────────────────────────────────────────
+class _ScanPage extends StatelessWidget {
+  final _ShellState s;
+  const _ScanPage({required this.s});
 
   @override
-  Widget build(BuildContext context) {
-    final sz = MediaQuery.of(context).size.width * 0.62;
-    final col = s._sigColor;
-    final isDetect = s._signal > s._alertThr * 0.5;
+  Widget build(BuildContext ctx) => SafeArea(
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+          child: Column(children: [
+            _Header(s: s),
+            const SizedBox(height: 20),
+            _Gauge(s: s),
+            const SizedBox(height: 20),
+            _DetectionBanner(s: s),
+            const SizedBox(height: 16),
+            _MetricsGrid(s: s),
+            const SizedBox(height: 16),
+            _Waveform(s: s),
+            const SizedBox(height: 16),
+            _AxisBars(s: s),
+            const SizedBox(height: 16),
+            _SignalBar(s: s),
+            const SizedBox(height: 16),
+            _ActionRow(s: s),
+          ]),
+        ),
+      );
+}
+
+// ── Header ──────────────────────────────────
+class _Header extends StatelessWidget {
+  final _ShellState s;
+  const _Header({required this.s});
+
+  @override
+  Widget build(BuildContext ctx) => Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text(
+              'SPECTRA PRO',
+              style: TextStyle(
+                color: C.cyan,
+                fontSize: 10,
+                letterSpacing: 3.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              s._statusLbl,
+              style: TextStyle(
+                color: s._sigCol,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ]),
+          if (s._tier == Tier.pro)
+            _ProBadge()
+          else
+            GestureDetector(
+              onTap: s._showProWall,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: C.gold.withOpacity(0.09),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: C.gold.withOpacity(0.35)),
+                ),
+                child: const Text(
+                  'Upgrade PRO ↗',
+                  style: TextStyle(
+                      color: C.gold, fontSize: 11, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+        ],
+      );
+}
+
+class _ProBadge extends StatelessWidget {
+  @override
+  Widget build(BuildContext ctx) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: C.gold.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: C.gold.withOpacity(0.45)),
+        ),
+        child: const Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(Icons.star_rounded, color: C.gold, size: 12),
+          SizedBox(width: 5),
+          Text('PRO',
+              style: TextStyle(
+                color: C.gold,
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.5,
+              )),
+        ]),
+      );
+}
+
+// ── Gauge ────────────────────────────────────
+class _Gauge extends StatelessWidget {
+  final _ShellState s;
+  const _Gauge({required this.s});
+
+  @override
+  Widget build(BuildContext ctx) {
+    final sz = MediaQuery.of(ctx).size.width * 0.60;
+    final col = s._sigCol;
+    final active = s._signal > s._alertT * 0.4;
 
     return AnimatedBuilder(
-      animation: s._pulseAnim,
-      builder: (_, __) {
-        final scale = isDetect ? s._pulseAnim.value : 1.0;
-        return Transform.scale(
-          scale: scale,
-          child: SizedBox(
-            width: sz,
-            height: sz,
-            child: Stack(alignment: Alignment.center, children: [
-              // Glow rings
-              ...List.generate(
-                  3,
-                  (i) => AnimatedBuilder(
-                        animation: s._scanAnim,
-                        builder: (_, __) {
-                          final progress = (s._scanAnim.value + i * 0.33) % 1.0;
-                          return Transform.scale(
-                            scale: 0.5 + progress * 0.5,
-                            child: Container(
-                              width: sz,
-                              height: sz,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                border: Border.all(
-                                  color: col.withOpacity(
-                                      (1 - progress) * (isDetect ? 0.6 : 0.2)),
-                                  width: 1.5,
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      )),
-
-              // BG circle
-              Container(
-                width: sz * 0.82,
-                height: sz * 0.82,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: AppColors.surface,
-                  border: Border.all(color: col.withOpacity(0.4), width: 1.5),
-                ),
-              ),
-
-              // Radial progress
-              SizedBox(
-                width: sz * 0.82,
-                height: sz * 0.82,
-                child: CircularProgressIndicator(
-                  value: s._signal / 100,
-                  strokeWidth: 4,
-                  backgroundColor: AppColors.border,
-                  valueColor: AlwaysStoppedAnimation<Color>(col),
-                  strokeCap: StrokeCap.round,
-                ),
-              ),
-
-              // Center content
-              Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                if (s._detType == 'gold')
-                  const Icon(Icons.star, color: AppColors.gold, size: 18),
-                Text(
-                  s._signal.toStringAsFixed(1),
-                  style: TextStyle(
-                    fontSize: sz * 0.28,
-                    fontWeight: FontWeight.w900,
-                    color: col,
-                    fontFamily: AppText.mono,
-                  ),
-                ),
-                Text('μT',
-                    style: TextStyle(
-                      fontSize: sz * 0.09,
-                      color: col.withOpacity(0.7),
-                      fontWeight: FontWeight.w600,
-                    )),
-                if (s._detected)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 4),
-                    child: Text(
-                      '${(s._detConf * 100).toStringAsFixed(0)}% güven',
-                      style: const TextStyle(
-                        fontSize: 10,
-                        color: AppColors.textSec,
-                        fontFamily: AppText.mono,
-                      ),
+      animation: Listenable.merge([s._pulseAnim, s._scanAnim, s._ringAnim]),
+      builder: (_, __) => Transform.scale(
+        scale: active ? s._pulseAnim.value : 1.0,
+        child: SizedBox(
+          width: sz,
+          height: sz,
+          child: Stack(alignment: Alignment.center, children: [
+            // Ripple rings
+            ...List.generate(3, (i) {
+              final phase = (s._scanAnim.value + i / 3.0) % 1.0;
+              return Opacity(
+                opacity: (1 - phase) * (active ? 0.55 : 0.15),
+                child: Transform.scale(
+                  scale: 0.55 + phase * 0.45,
+                  child: Container(
+                    width: sz,
+                    height: sz,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: col, width: 1.2),
                     ),
                   ),
-              ]),
+                ),
+              );
+            }),
+
+            // Background circle with subtle gradient
+            Container(
+              width: sz * 0.80,
+              height: sz * 0.80,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: RadialGradient(colors: [
+                  col.withOpacity(0.06),
+                  C.surface.withOpacity(0.95),
+                ]),
+                border: Border.all(color: col.withOpacity(0.30), width: 1.5),
+              ),
+            ),
+
+            // Progress arc
+            SizedBox(
+              width: sz * 0.80,
+              height: sz * 0.80,
+              child: CircularProgressIndicator(
+                value: s._signal / 100,
+                strokeWidth: 5,
+                backgroundColor: C.border.withOpacity(0.5),
+                valueColor: AlwaysStoppedAnimation<Color>(col),
+                strokeCap: StrokeCap.round,
+              ),
+            ),
+
+            // Inner content
+            Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              if (s._detType == 'gold')
+                const Icon(Icons.star_rounded, color: C.gold, size: 16),
+              Text(
+                s._signal.toStringAsFixed(1),
+                style: TextStyle(
+                  fontSize: sz * 0.27,
+                  fontWeight: FontWeight.w900,
+                  color: col,
+                  fontFamily: C.mono,
+                  height: 1.0,
+                ),
+              ),
+              Text(
+                'µT',
+                style: TextStyle(
+                  fontSize: sz * 0.08,
+                  color: col.withOpacity(0.65),
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 1,
+                ),
+              ),
+              if (s._det) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: col.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    '${(s._detConf * 100).toStringAsFixed(0)}% conf',
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      color: C.tPrim,
+                      fontFamily: C.mono,
+                    ),
+                  ),
+                ),
+              ],
             ]),
-          ),
-        );
-      },
+          ]),
+        ),
+      ),
     );
   }
 }
 
-// ── Status Strip ──────────────────────────────
-class _StatusStrip extends StatelessWidget {
-  final _RootShellState s;
-  const _StatusStrip({required this.s});
+// ── Detection Banner ─────────────────────────
+class _DetectionBanner extends StatelessWidget {
+  final _ShellState s;
+  const _DetectionBanner({required this.s});
 
   @override
-  Widget build(BuildContext context) {
-    final col = s._sigColor;
-    return Container(
+  Widget build(BuildContext ctx) {
+    final col = s._sigCol;
+    final icon = s._det
+        ? s._detIcon(s._detType)
+        : (s._caling ? Icons.settings_rounded : Icons.radar_rounded);
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: col.withOpacity(0.4), width: 1),
+        color: col.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: col.withOpacity(s._det ? 0.5 : 0.25),
+            width: s._det ? 1.5 : 1),
       ),
       child: Column(children: [
         Row(children: [
@@ -1192,40 +1267,46 @@ class _StatusStrip extends StatelessWidget {
               color: col.withOpacity(0.12),
               shape: BoxShape.circle,
             ),
-            child: Icon(
-              s._detected ? Icons.warning_amber_rounded : Icons.radar_rounded,
-              color: col,
-              size: 24,
-            ),
+            child: Icon(icon, color: col, size: 22),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 14),
           Expanded(
               child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                Text(s._statusLabel,
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w700,
-                      color: col,
-                    )),
-                Text(s._calibMsg,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      color: AppColors.textSec,
-                    )),
-              ])),
-          if (s._detected) _TypeBadge(type: s._detType),
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                s._statusLbl,
+                style: TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w800, color: col),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                s._calMsg,
+                style: const TextStyle(fontSize: 11, color: C.tSec),
+              ),
+            ],
+          )),
+          if (s._det) _DetBadge(type: s._detType),
         ]),
-        if (s._calibrating) ...[
+        if (s._caling) ...[
           const SizedBox(height: 10),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
-              value: s._calibProgress / 100,
+              value: s._calPct / 100,
               minHeight: 3,
-              backgroundColor: AppColors.border,
+              backgroundColor: C.border,
               valueColor: AlwaysStoppedAnimation<Color>(col),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${s._calPct}%',
+            style: TextStyle(
+              fontSize: 10,
+              color: col,
+              fontFamily: C.mono,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ],
@@ -1234,139 +1315,93 @@ class _StatusStrip extends StatelessWidget {
   }
 }
 
-class _TypeBadge extends StatelessWidget {
+class _DetBadge extends StatelessWidget {
   final String type;
-  const _TypeBadge({required this.type});
+  const _DetBadge({required this.type});
 
   @override
-  Widget build(BuildContext context) {
-    Color c;
-    String t;
-    switch (type) {
-      case 'gold':
-        c = AppColors.gold;
-        t = 'ALTIN';
-        break;
-      case 'ferrous':
-        c = AppColors.red;
-        t = 'DEMİR';
-        break;
-      case 'nonferrous':
-        c = AppColors.orange;
-        t = 'METAL';
-        break;
-      default:
-        c = AppColors.textSec;
-        t = '-';
-    }
+  Widget build(BuildContext ctx) {
+    final (c, t, ic) = switch (type) {
+      'gold' => (C.gold, 'GOLD', Icons.star_rounded),
+      'ferrous' => (C.red, 'IRON', Icons.bolt_rounded),
+      'nonferrous' => (C.orange, 'METAL', Icons.radio_button_checked_rounded),
+      _ => (C.tSec, '-', Icons.circle_outlined),
+    };
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: c.withOpacity(0.15),
-        borderRadius: BorderRadius.circular(8),
+        color: c.withOpacity(0.14),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: c.withOpacity(0.5)),
       ),
-      child: Text(t,
-          style: TextStyle(
-            color: c,
-            fontSize: 11,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 1,
-          )),
-    );
-  }
-}
-
-// ── BT Data Strip ─────────────────────────────
-class _BtDataStrip extends StatelessWidget {
-  final _RootShellState s;
-  const _BtDataStrip({required this.s});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.gold.withOpacity(0.07),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.gold.withOpacity(0.3)),
-      ),
-      child: Row(children: [
-        const Icon(Icons.bluetooth, color: AppColors.gold, size: 16),
-        const SizedBox(width: 8),
-        Expanded(
-            child: Text(s._btStatus,
-                style: const TextStyle(
-                  color: AppColors.gold,
-                  fontSize: 12,
-                ))),
-        Text(
-          'BT Mag: ${s._btData!.magnitude.toStringAsFixed(1)} µT',
-          style: const TextStyle(
-            color: AppColors.textSec,
-            fontSize: 11,
-            fontFamily: AppText.mono,
-          ),
-        ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(ic, color: c, size: 12),
+        const SizedBox(width: 4),
+        Text(t,
+            style: TextStyle(
+              color: c,
+              fontSize: 10,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+            )),
       ]),
     );
   }
 }
 
-// ── Metrics Grid ──────────────────────────────
+// ── Metrics grid ─────────────────────────────
 class _MetricsGrid extends StatelessWidget {
-  final _RootShellState s;
+  final _ShellState s;
   const _MetricsGrid({required this.s});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext ctx) {
+    final dev = (_emaFast(s) - s._baseline).abs();
     final items = [
-      ('Ham Alan', '${s._magRaw.toStringAsFixed(1)} µT', AppColors.cyan),
-      ('Baz Çizgi', '${s._baseline.toStringAsFixed(1)} µT', AppColors.purple),
+      ('Raw Field', '${s._rawMag.toStringAsFixed(2)} µT', C.cyan),
+      ('Filtered', '${_emaFast(s).toStringAsFixed(2)} µT', C.purple),
+      ('Baseline', '${s._baseline.toStringAsFixed(2)} µT', C.green),
+      ('Deviation', '${dev.toStringAsFixed(2)} µT', C.orange),
       (
-        'Sapma',
-        '${(s._magFilt - s._baseline).abs().toStringAsFixed(1)} µT',
-        AppColors.orange
+        'Min',
+        '${s._mMin == 9999 ? "—" : s._mMin.toStringAsFixed(1)} µT',
+        C.cyanDim
       ),
-      (
-        'Min / Maks',
-        '${s._magMin.toStringAsFixed(0)} / ${s._magMax.toStringAsFixed(0)}',
-        AppColors.green
-      ),
+      ('Max', '${s._mMax.toStringAsFixed(1)} µT', C.red),
+      ('Noise Floor', '${s._noiseFloor.toStringAsFixed(2)} µT', C.tSec),
+      ('Samples', '${s._totalSamples}', C.tSec),
     ];
+
     return GridView.count(
       crossAxisCount: 2,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       crossAxisSpacing: 10,
       mainAxisSpacing: 10,
-      childAspectRatio: 2.5,
+      childAspectRatio: 2.6,
       children: items.map((it) {
-        final (label, value, col) = it;
+        final (lbl, val, col) = it;
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           decoration: BoxDecoration(
-            color: AppColors.card,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: AppColors.border),
+            color: C.card,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: C.border),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(label,
+              Text(lbl,
                   style: const TextStyle(
-                    fontSize: 10,
-                    color: AppColors.textSec,
-                    letterSpacing: 0.5,
-                  )),
-              const SizedBox(height: 2),
-              Text(value,
+                      fontSize: 9.5, color: C.tSec, letterSpacing: .5)),
+              const SizedBox(height: 3),
+              Text(val,
                   style: TextStyle(
-                    fontSize: 13,
+                    fontSize: 12.5,
                     color: col,
                     fontWeight: FontWeight.w700,
-                    fontFamily: AppText.mono,
+                    fontFamily: C.mono,
                   )),
             ],
           ),
@@ -1374,469 +1409,601 @@ class _MetricsGrid extends StatelessWidget {
       }).toList(),
     );
   }
+
+  double _emaFast(_ShellState s) => s._emaFast;
 }
 
-// ── Waveform ──────────────────────────────────
+// ── Waveform ─────────────────────────────────
 class _Waveform extends StatelessWidget {
-  final _RootShellState s;
+  final _ShellState s;
   const _Waveform({required this.s});
 
   @override
-  Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('MANYETİK DALGA',
-          style: TextStyle(
-            color: AppColors.textSec,
-            fontSize: 10,
-            letterSpacing: 2,
-          )),
-      const SizedBox(height: 8),
-      Container(
-        height: 120,
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: CustomPaint(
-            painter: _WaveformPainter(
-              history: s._magHist,
-              head: s._histIdx,
-              baseline: s._baseline,
-              color: s._sigColor,
+  Widget build(BuildContext ctx) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('MAGNETIC WAVEFORM',
+                style:
+                    TextStyle(color: C.tSec, fontSize: 9.5, letterSpacing: 2)),
+            Text('BL: ${s._baseline.toStringAsFixed(1)} µT',
+                style: const TextStyle(
+                  color: C.tDim,
+                  fontSize: 9,
+                  fontFamily: C.mono,
+                )),
+          ]),
+          const SizedBox(height: 8),
+          Container(
+            height: 130,
+            decoration: BoxDecoration(
+              color: C.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: C.border),
             ),
-            size: Size.infinite,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(14),
+              child: CustomPaint(
+                size: Size.infinite,
+                painter: _WavePainter(
+                  hist: s._hist,
+                  head: s._hIdx,
+                  base: s._baseline,
+                  col: s._sigCol,
+                  alert: s._alertT,
+                  noise: s._noiseFloor,
+                  sens: s._sens,
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
-    ]);
-  }
+        ],
+      );
 }
 
-class _WaveformPainter extends CustomPainter {
-  final List<double> history;
+class _WavePainter extends CustomPainter {
+  final List<double> hist;
   final int head;
-  final double baseline;
-  final Color color;
-  const _WaveformPainter(
-      {required this.history,
-      required this.head,
-      required this.baseline,
-      required this.color});
+  final double base, alert, noise, sens;
+  final Color col;
+
+  const _WavePainter({
+    required this.hist,
+    required this.head,
+    required this.base,
+    required this.col,
+    required this.alert,
+    required this.noise,
+    required this.sens,
+  });
 
   @override
-  void paint(Canvas canvas, Size size) {
+  void paint(Canvas canvas, Size sz) {
     // Grid lines
-    final gridPaint = Paint()
-      ..color = AppColors.border.withOpacity(0.4)
+    final grid = Paint()
+      ..color = C.border.withOpacity(0.35)
       ..strokeWidth = 0.5;
     for (int i = 1; i < 4; i++) {
-      final y = size.height * i / 4;
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+      final y = sz.height * i / 4;
+      canvas.drawLine(Offset(0, y), Offset(sz.width, y), grid);
     }
-
     // Baseline
     canvas.drawLine(
-      Offset(0, size.height / 2),
-      Offset(size.width, size.height / 2),
+      Offset(0, sz.height * 0.5),
+      Offset(sz.width, sz.height * 0.5),
       Paint()
-        ..color = Colors.white.withOpacity(0.08)
+        ..color = Colors.white.withOpacity(0.06)
         ..strokeWidth = 1,
     );
 
-    // Fill
-    final fillPath = Path();
-    final dx = size.width / (history.length - 1);
-    fillPath.moveTo(size.width, size.height / 2);
-    for (int i = 0; i < history.length; i++) {
-      final idx = (head - 1 - i + history.length) % history.length;
-      final dev = (history[idx] - baseline).abs() * 8.0;
-      final y = (size.height / 2 - dev).clamp(2.0, size.height - 2.0);
-      fillPath.lineTo(size.width - i * dx, y);
+    // Alert threshold line
+    final alertY =
+        sz.height * 0.5 - (alert / (noise * sens * 1.2 + 1)) * sz.height * 0.4;
+    canvas.drawLine(
+      Offset(0, alertY),
+      Offset(sz.width, alertY),
+      Paint()
+        ..color = C.orange.withOpacity(0.3)
+        ..strokeWidth = 0.8
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round,
+    );
+
+    if (base == 0) return;
+    final dx = sz.width / (hist.length - 1);
+    final scale = sz.height * 0.42 / max(noise * sens * 1.2, 5);
+
+    double yAt(int i) {
+      final idx = (head - 1 - i + hist.length) % hist.length;
+      final v = hist[idx];
+      if (v == 0) return sz.height * 0.5;
+      return (sz.height * 0.5 - (v - base) * scale).clamp(2.0, sz.height - 2.0);
     }
-    fillPath.lineTo(0, size.height / 2);
-    fillPath.close();
+
+    // Fill
+    final fill = Path()..moveTo(sz.width, sz.height * 0.5);
+    for (int i = 0; i < hist.length; i++) {
+      fill.lineTo(sz.width - i * dx, yAt(i));
+    }
+    fill
+      ..lineTo(0, sz.height * 0.5)
+      ..close();
     canvas.drawPath(
-        fillPath,
+        fill,
         Paint()
-          ..color = color.withOpacity(0.08)
+          ..color = col.withOpacity(0.07)
           ..style = PaintingStyle.fill);
 
     // Line
-    final linePath = Path();
-    linePath.moveTo(size.width, size.height / 2);
-    for (int i = 0; i < history.length; i++) {
-      final idx = (head - 1 - i + history.length) % history.length;
-      final dev = (history[idx] - baseline).abs() * 8.0;
-      final y = (size.height / 2 - dev).clamp(2.0, size.height - 2.0);
-      linePath.lineTo(size.width - i * dx, y);
+    final line = Path()..moveTo(sz.width, yAt(0));
+    for (int i = 1; i < hist.length; i++) {
+      line.lineTo(sz.width - i * dx, yAt(i));
     }
     canvas.drawPath(
-        linePath,
+        line,
         Paint()
-          ..color = color
-          ..strokeWidth = 1.8
+          ..color = col
+          ..strokeWidth = 2.0
           ..style = PaintingStyle.stroke
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round);
   }
 
   @override
-  bool shouldRepaint(_WaveformPainter o) => o.head != head || o.color != color;
+  bool shouldRepaint(_WavePainter o) =>
+      o.head != head || o.col != col || o.base != base;
 }
 
-// ── Axis Bars ─────────────────────────────────
+// ── Axis Bars ────────────────────────────────
 class _AxisBars extends StatelessWidget {
-  final _RootShellState s;
+  final _ShellState s;
   const _AxisBars({required this.s});
 
   @override
-  Widget build(BuildContext context) {
-    final maxAbs = 200.0;
+  Widget build(BuildContext ctx) {
     final axes = [
-      ('X', s._magX, AppColors.red),
-      ('Y', s._magY, AppColors.green),
-      ('Z', s._magZ, AppColors.cyan),
+      ('X', s._rawX, C.red),
+      ('Y', s._rawY, C.green),
+      ('Z', s._rawZ, C.cyan),
     ];
+    final maxMag = max(s._rawX.abs(), max(s._rawY.abs(), s._rawZ.abs()));
+    final norm = maxMag > 0 ? maxMag * 1.2 : 200;
+
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      const Text('EKSEN VERİSİ',
-          style: TextStyle(
-            color: AppColors.textSec,
-            fontSize: 10,
-            letterSpacing: 2,
-          )),
+      const Text('AXIS COMPONENTS',
+          style: TextStyle(color: C.tSec, fontSize: 9.5, letterSpacing: 2)),
       const SizedBox(height: 8),
       Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border),
+          color: C.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: C.border),
         ),
         child: Column(
-            children: axes.map((ax) {
-          final (label, val, col) = ax;
-          final pct = (val.abs() / maxAbs).clamp(0.0, 1.0);
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(children: [
-              SizedBox(
-                width: 14,
-                child: Text(label,
-                    style: TextStyle(
-                      color: col,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    )),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                  child: Stack(children: [
-                Container(
-                    height: 6,
-                    decoration: BoxDecoration(
-                      color: AppColors.border,
-                      borderRadius: BorderRadius.circular(3),
-                    )),
-                FractionallySizedBox(
-                  widthFactor: pct,
-                  child: Container(
-                      height: 6,
-                      decoration: BoxDecoration(
+          children: axes.map((ax) {
+            final (lbl, val, col) = ax;
+            final pct = (val.abs() / norm).clamp(0.0, 1.0);
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Row(children: [
+                SizedBox(
+                  width: 14,
+                  child: Text(lbl,
+                      style: TextStyle(
                         color: col,
-                        borderRadius: BorderRadius.circular(3),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       )),
                 ),
-              ])),
-              const SizedBox(width: 10),
-              SizedBox(
-                width: 58,
-                child: Text(
-                  '${val.toStringAsFixed(1)} µT',
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: col,
-                    fontFamily: AppText.mono,
-                    fontWeight: FontWeight.w600,
+                const SizedBox(width: 10),
+                Expanded(
+                    child: Stack(children: [
+                  Container(
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: C.border,
+                        borderRadius: BorderRadius.circular(3),
+                      )),
+                  FractionallySizedBox(
+                    widthFactor: pct,
+                    child: Container(
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: col,
+                          borderRadius: BorderRadius.circular(3),
+                          boxShadow: [
+                            BoxShadow(
+                                color: col.withOpacity(0.4), blurRadius: 4)
+                          ],
+                        )),
                   ),
-                  textAlign: TextAlign.right,
+                ])),
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 62,
+                  child: Text(
+                    '${val.toStringAsFixed(2)} µT',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      color: col,
+                      fontFamily: C.mono,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ]),
+            );
+          }).toList(),
+        ),
+      ),
+    ]);
+  }
+}
+
+// ── Signal strength bar ──────────────────────
+class _SignalBar extends StatelessWidget {
+  final _ShellState s;
+  const _SignalBar({required this.s});
+
+  @override
+  Widget build(BuildContext ctx) {
+    final col = s._sigCol;
+    final pct = s._signal / 100;
+    const zones = [
+      (0.20, C.green, 'LOW'),
+      (0.55, C.cyan, 'WEAK'),
+      (0.70, C.orange, 'MED'),
+      (0.85, C.red, 'HIGH'),
+      (1.00, C.gold, 'MAX'),
+    ];
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        const Text('SIGNAL STRENGTH',
+            style: TextStyle(color: C.tSec, fontSize: 9.5, letterSpacing: 2)),
+        Text('${s._signal.toStringAsFixed(1)}%',
+            style: TextStyle(
+              color: col,
+              fontSize: 12,
+              fontFamily: C.mono,
+              fontWeight: FontWeight.w700,
+            )),
+      ]),
+      const SizedBox(height: 8),
+      Container(
+        height: 10,
+        decoration: BoxDecoration(
+          color: C.border,
+          borderRadius: BorderRadius.circular(5),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(5),
+          child: LayoutBuilder(
+            builder: (_, constraints) => Stack(children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 60),
+                width: constraints.maxWidth * pct,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [C.green, col]),
+                  borderRadius: BorderRadius.circular(5),
+                  boxShadow: pct > 0.2
+                      ? [BoxShadow(color: col.withOpacity(0.5), blurRadius: 6)]
+                      : null,
                 ),
               ),
             ]),
-          );
-        }).toList()),
+          ),
+        ),
+      ),
+      const SizedBox(height: 6),
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: zones.map((z) {
+          final (_, c, lbl) = z;
+          return Text(lbl,
+              style: TextStyle(
+                fontSize: 8.5,
+                color: c,
+                fontWeight: FontWeight.w600,
+                letterSpacing: .5,
+              ));
+        }).toList(),
       ),
     ]);
   }
 }
 
-// ── Action Row ────────────────────────────────
+// ── Action row ───────────────────────────────
 class _ActionRow extends StatelessWidget {
-  final _RootShellState s;
+  final _ShellState s;
   const _ActionRow({required this.s});
 
   @override
-  Widget build(BuildContext context) {
-    return Row(children: [
-      Expanded(
-          child: _ActionBtn(
-        icon: Icons.refresh_rounded,
-        label: 'Kalibrasyon',
-        color: AppColors.cyan,
-        enabled: !s._calibrating,
-        onTap: () async {
-          s._calibDone = false;
-          await s._calibrate();
-        },
-      )),
-      const SizedBox(width: 10),
-      Expanded(
-          child: _ActionBtn(
-        icon: s._monitoring ? Icons.pause_rounded : Icons.play_arrow_rounded,
-        label: s._monitoring ? 'Durdur' : 'Başlat',
-        color: s._monitoring ? AppColors.orange : AppColors.green,
-        enabled: s._calibDone,
-        onTap: () => s.setState(() => s._monitoring = !s._monitoring),
-      )),
-      const SizedBox(width: 10),
-      Expanded(
-          child: _ActionBtn(
-        icon: Icons.download_rounded,
-        label: 'Dışa Aktar',
-        color: AppColors.purple,
-        enabled: s._readings.isNotEmpty,
-        onTap: () {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('${s._readings.length} kayıt dışa aktarıldı'),
-            backgroundColor: AppColors.purple,
-          ));
-        },
-      )),
-    ]);
-  }
+  Widget build(BuildContext ctx) => Row(children: [
+        Expanded(
+            child: _Btn(
+          icon: Icons.refresh_rounded,
+          label: 'Recalibrate',
+          col: C.cyan,
+          on: !s._caling,
+          tap: () async {
+            s._calDone = false;
+            await s._runCalibration();
+          },
+        )),
+        const SizedBox(width: 10),
+        Expanded(
+            child: _Btn(
+          icon: s._monitoring ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          label: s._monitoring ? 'Pause' : 'Resume',
+          col: s._monitoring ? C.orange : C.green,
+          on: s._calDone,
+          tap: () => s.setState(() {
+            s._monitoring = !s._monitoring;
+            if (!s._monitoring) {
+              s._audio.stop();
+              s._beeping = false;
+            }
+          }),
+        )),
+        const SizedBox(width: 10),
+        Expanded(
+            child: _Btn(
+          icon: Icons.download_rounded,
+          label: 'Export CSV',
+          col: C.purple,
+          on: s._readings.isNotEmpty,
+          tap: () {
+            Clipboard.setData(
+                ClipboardData(text: MagReading.toCsv(s._readings)));
+            ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
+              content: Text('${s._readings.length} readings copied (CSV)'),
+              backgroundColor: C.purple,
+              duration: const Duration(seconds: 3),
+            ));
+          },
+        )),
+      ]);
 }
 
-class _ActionBtn extends StatelessWidget {
+class _Btn extends StatelessWidget {
   final IconData icon;
   final String label;
-  final Color color;
-  final bool enabled;
-  final VoidCallback onTap;
-  const _ActionBtn(
-      {required this.icon,
-      required this.label,
-      required this.color,
-      required this.enabled,
-      required this.onTap});
+  final Color col;
+  final bool on;
+  final VoidCallback tap;
+
+  const _Btn({
+    required this.icon,
+    required this.label,
+    required this.col,
+    required this.on,
+    required this.tap,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(
-          color: enabled ? color.withOpacity(0.12) : AppColors.card,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: enabled ? color.withOpacity(0.5) : AppColors.border,
+  Widget build(BuildContext ctx) => GestureDetector(
+        onTap: on ? tap : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          decoration: BoxDecoration(
+            color: on ? col.withOpacity(0.10) : C.card,
+            borderRadius: BorderRadius.circular(13),
+            border: Border.all(color: on ? col.withOpacity(0.45) : C.border),
+            boxShadow: on
+                ? [
+                    BoxShadow(
+                        color: col.withOpacity(0.12),
+                        blurRadius: 8,
+                        spreadRadius: 0)
+                  ]
+                : null,
           ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Icon(icon, color: on ? col : C.tDim, size: 20),
+            const SizedBox(height: 5),
+            Text(label,
+                style: TextStyle(
+                  fontSize: 9.5,
+                  color: on ? col : C.tDim,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: .3,
+                )),
+          ]),
         ),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Icon(icon, color: enabled ? color : AppColors.textDim, size: 20),
-          const SizedBox(height: 4),
-          Text(label,
-              style: TextStyle(
-                fontSize: 10,
-                color: enabled ? color : AppColors.textDim,
-                fontWeight: FontWeight.w600,
-              )),
-        ]),
-      ),
-    );
-  }
+      );
 }
 
-// ─────────────────────────────────────────────
-//  ANALYTICS PAGE
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// ANALYTICS PAGE
+// ──────────────────────────────────────────────
 class _AnalyticsPage extends StatelessWidget {
-  final _RootShellState s;
+  final _ShellState s;
   const _AnalyticsPage({required this.s});
 
   @override
-  Widget build(BuildContext context) {
-    final dur = s._sessionStart != null
-        ? DateTime.now().difference(s._sessionStart!)
+  Widget build(BuildContext ctx) {
+    final dur = s._sessStart != null
+        ? DateTime.now().difference(s._sessStart!)
         : Duration.zero;
     final durStr =
         '${dur.inMinutes}:${(dur.inSeconds % 60).toString().padLeft(2, '0')}';
-    final avgSig = s._readings.isEmpty
+
+    final avg = s._readings.isEmpty
         ? 0.0
-        : s._readings.map((r) => r.fieldStrength).reduce((a, b) => a + b) /
+        : s._readings.map((r) => r.signal).reduce((a, b) => a + b) /
             s._readings.length;
-    final goldCount = s._detections.where((d) => d.type == 'gold').length;
-    final ferrCount = s._detections.where((d) => d.type == 'ferrous').length;
-    final nonFCount = s._detections.where((d) => d.type == 'nonferrous').length;
+    final peak = s._readings.isEmpty
+        ? 0.0
+        : s._readings.map((r) => r.signal).reduce(max);
+
+    final gold = s._detections.where((d) => d.type == 'gold').length;
+    final ferr = s._detections.where((d) => d.type == 'ferrous').length;
+    final nonf = s._detections.where((d) => d.type == 'nonferrous').length;
 
     return SafeArea(
       child: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const _PageTitle(title: 'ANALİTİK'),
+          const _Lbl(t: 'SESSION ANALYTICS', big: true),
           const SizedBox(height: 16),
-
-          // Stats grid
           GridView.count(
             crossAxisCount: 2,
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
             crossAxisSpacing: 10,
             mainAxisSpacing: 10,
-            childAspectRatio: 1.6,
+            childAspectRatio: 1.7,
             children: [
-              _StatCard('Oturum', durStr, AppColors.cyan, Icons.timer_rounded),
-              _StatCard('Tespit', '${s._totalDet}', AppColors.red,
-                  Icons.warning_rounded),
-              _StatCard('Okuma', '${s._readings.length}', AppColors.green,
+              _StatCard('Session Time', durStr, C.cyan, Icons.timer_rounded),
+              _StatCard(
+                  'Detections', '${s._totalDet}', C.red, Icons.warning_rounded),
+              _StatCard('Readings', '${s._readings.length}', C.green,
                   Icons.data_usage_rounded),
-              _StatCard('Ort. Sig', '${avgSig.toStringAsFixed(1)} µT',
-                  AppColors.orange, Icons.show_chart_rounded),
+              _StatCard('Avg Signal', '${avg.toStringAsFixed(1)}', C.orange,
+                  Icons.show_chart_rounded),
+              _StatCard('Peak Signal', '${peak.toStringAsFixed(1)}', C.purple,
+                  Icons.trending_up_rounded),
+              _StatCard('Samples/sec', _samplesPerSec(s), C.tSec,
+                  Icons.speed_rounded),
             ],
           ),
-
-          const SizedBox(height: 20),
-
-          // Metal type breakdown
-          const _SectionLabel('METAL TÜRÜ DAĞILIMI'),
+          const SizedBox(height: 22),
+          const _Lbl(t: 'METAL TYPE BREAKDOWN'),
           const SizedBox(height: 10),
-          _MetalBreakdown(
-              gold: goldCount,
-              ferrous: ferrCount,
-              nonFerrous: nonFCount,
+          _BreakdownCard(
+              gold: gold,
+              ferrous: ferr,
+              nonFerrous: nonf,
               total: s._totalDet,
-              isPro: s._tier == SubscriptionTier.pro),
-
-          const SizedBox(height: 20),
-
-          // Detection history
-          _SectionLabel('TESPİT GEÇMİŞİ (${s._detections.length})'),
+              isPro: s._tier == Tier.pro),
+          const SizedBox(height: 22),
+          _Lbl(t: 'DETECTION LOG (${s._detections.length})'),
           const SizedBox(height: 10),
-
           if (s._detections.isEmpty)
             Center(
                 child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 32),
+              padding: const EdgeInsets.symmetric(vertical: 40),
               child: Column(children: [
-                Icon(Icons.radar_rounded, color: AppColors.textDim, size: 36),
-                const SizedBox(height: 8),
-                Text(s._calibDone ? 'Henüz tespit yok' : 'Kalibre ediliyor...',
-                    style: const TextStyle(
-                        color: AppColors.textSec, fontSize: 13)),
+                const Icon(Icons.radar_rounded, color: C.tDim, size: 40),
+                const SizedBox(height: 10),
+                Text(
+                  s._calDone ? 'No detections yet' : 'Calibrating…',
+                  style: const TextStyle(color: C.tSec, fontSize: 13),
+                ),
               ]),
             ))
           else
-            ...s._detections.reversed.take(30).map((d) => _DetectionTile(d: d)),
+            ...s._detections.reversed.take(50).map((d) => _DetTile(d: d)),
         ]),
       ),
     );
   }
+
+  String _samplesPerSec(_ShellState s) {
+    if (s._sessStart == null || s._totalSamples == 0) return '—';
+    final secs = DateTime.now().difference(s._sessStart!).inSeconds;
+    if (secs == 0) return '—';
+    return '${(s._totalSamples / secs).toStringAsFixed(0)}/s';
+  }
 }
 
 class _StatCard extends StatelessWidget {
-  final String title, value;
-  final Color color;
-  final IconData icon;
-  const _StatCard(this.title, this.value, this.color, this.icon);
+  final String t, v;
+  final Color col;
+  final IconData ic;
+  const _StatCard(this.t, this.v, this.col, this.ic);
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Column(
+  Widget build(BuildContext ctx) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: col.withOpacity(0.25)),
+        ),
+        child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Row(children: [
-              Icon(icon, color: color, size: 14),
+              Icon(ic, color: col, size: 13),
               const SizedBox(width: 6),
-              Text(title,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    color: AppColors.textSec,
-                    letterSpacing: 0.5,
-                  )),
+              Flexible(
+                  child: Text(t,
+                      style: const TextStyle(
+                        fontSize: 9.5,
+                        color: C.tSec,
+                        letterSpacing: .4,
+                      ))),
             ]),
-            Text(value,
+            Text(v,
                 style: TextStyle(
-                  fontSize: 20,
+                  fontSize: 22,
                   fontWeight: FontWeight.w900,
-                  color: color,
-                  fontFamily: AppText.mono,
+                  color: col,
+                  fontFamily: C.mono,
                 )),
-          ]),
-    );
-  }
+          ],
+        ),
+      );
 }
 
-class _MetalBreakdown extends StatelessWidget {
+class _BreakdownCard extends StatelessWidget {
   final int gold, ferrous, nonFerrous, total;
   final bool isPro;
-  const _MetalBreakdown(
-      {required this.gold,
-      required this.ferrous,
-      required this.nonFerrous,
-      required this.total,
-      required this.isPro});
+  const _BreakdownCard({
+    required this.gold,
+    required this.ferrous,
+    required this.nonFerrous,
+    required this.total,
+    required this.isPro,
+  });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext ctx) {
     final items = [
-      if (isPro) ('ALTIN', gold, AppColors.gold),
-      ('DEMİR', ferrous, AppColors.red),
-      ('METAL', nonFerrous, AppColors.orange),
+      if (isPro) ('GOLD', gold, C.gold),
+      ('IRON/STEEL', ferrous, C.red),
+      ('NON-FERROUS', nonFerrous, C.orange),
     ];
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
+        color: C.card,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: C.border),
       ),
       child: Column(
           children: items.map((it) {
-        final (label, count, col) = it;
-        final pct = total > 0 ? count / total : 0.0;
+        final (lbl, cnt, col) = it;
+        final pct = total > 0 ? cnt / total : 0.0;
         return Padding(
-          padding: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.only(bottom: 14),
           child: Column(children: [
             Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Text(label,
+              Text(lbl,
                   style: TextStyle(
                     color: col,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
                     letterSpacing: 1,
                   )),
-              Text('$count tane  (${(pct * 100).toStringAsFixed(0)}%)',
-                  style:
-                      const TextStyle(color: AppColors.textSec, fontSize: 11)),
+              Text('$cnt  (${(pct * 100).toStringAsFixed(0)}%)',
+                  style: const TextStyle(color: C.tSec, fontSize: 11)),
             ]),
-            const SizedBox(height: 6),
+            const SizedBox(height: 7),
             ClipRRect(
-              borderRadius: BorderRadius.circular(4),
+              borderRadius: BorderRadius.circular(5),
               child: LinearProgressIndicator(
                 value: pct,
-                minHeight: 5,
-                backgroundColor: AppColors.border,
+                minHeight: 6,
+                backgroundColor: C.border,
                 valueColor: AlwaysStoppedAnimation<Color>(col),
               ),
             ),
@@ -1847,750 +2014,657 @@ class _MetalBreakdown extends StatelessWidget {
   }
 }
 
-class _DetectionTile extends StatelessWidget {
-  final Detection d;
-  const _DetectionTile({required this.d});
+class _DetTile extends StatelessWidget {
+  final DetectionEvent d;
+  const _DetTile({required this.d});
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: AppColors.card,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: d.color.withOpacity(0.3)),
-      ),
-      child: Row(children: [
-        Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-            color: d.color.withOpacity(0.12),
-            shape: BoxShape.circle,
-          ),
-          child: Icon(
-            d.type == 'gold'
-                ? Icons.star_rounded
-                : d.type == 'ferrous'
-                    ? Icons.bolt_rounded
-                    : Icons.radio_button_checked_rounded,
-            color: d.color,
-            size: 18,
-          ),
+  Widget build(BuildContext ctx) => Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: d.color.withOpacity(0.25)),
         ),
-        const SizedBox(width: 12),
-        Expanded(
-            child:
-                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(d.label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: d.color,
-              )),
-          Text(DateFormat('HH:mm:ss').format(d.ts),
-              style: const TextStyle(fontSize: 10, color: AppColors.textSec)),
-        ])),
-        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          Text('${d.signal.toStringAsFixed(0)} µT',
-              style: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                color: AppColors.textPrim,
-                fontFamily: AppText.mono,
-              )),
-          Text('${(d.confidence * 100).toStringAsFixed(0)}%',
-              style: const TextStyle(fontSize: 10, color: AppColors.textSec)),
+        child: Row(children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              color: d.color.withOpacity(0.12),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(d.icon, color: d.color, size: 17),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(d.label,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: d.color,
+                  )),
+              Text(DateFormat('HH:mm:ss.S').format(d.ts),
+                  style: const TextStyle(fontSize: 10, color: C.tSec)),
+            ],
+          )),
+          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('${d.signal.toStringAsFixed(1)}',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: C.tPrim,
+                  fontFamily: C.mono,
+                )),
+            Text('${(d.conf * 100).toStringAsFixed(0)}% conf',
+                style: const TextStyle(fontSize: 10, color: C.tSec)),
+          ]),
         ]),
-      ]),
-    );
-  }
+      );
 }
 
-// ─────────────────────────────────────────────
-//  BLUETOOTH PAGE (PRO)
-// ─────────────────────────────────────────────
-class _BluetoothPage extends StatelessWidget {
-  final _RootShellState s;
-  const _BluetoothPage({required this.s});
+// ──────────────────────────────────────────────
+// PRO LOCK PAGE (shown for locked tabs)
+// ──────────────────────────────────────────────
+class _ProLock extends StatelessWidget {
+  final VoidCallback onUnlock;
+  final String label;
+  const _ProLock({required this.onUnlock, required this.label});
 
   @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Column(children: [
-        Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(children: [
-            const _PageTitle(title: 'BLUETOOTH SENSÖR'),
-            const SizedBox(height: 12),
-
-            // Connection status
+  Widget build(BuildContext ctx) => SafeArea(
+        child: Center(
+            child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Container(
-              padding: const EdgeInsets.all(14),
+              width: 80,
+              height: 80,
               decoration: BoxDecoration(
-                color: AppColors.card,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: s._btConnected
-                      ? AppColors.green.withOpacity(0.5)
-                      : AppColors.border,
-                ),
+                shape: BoxShape.circle,
+                color: C.gold.withOpacity(0.09),
+                border: Border.all(color: C.gold.withOpacity(0.4), width: 1.5),
               ),
+              child: const Icon(Icons.lock_rounded, color: C.gold, size: 36),
+            ),
+            const SizedBox(height: 24),
+            Text(label,
+                style: const TextStyle(
+                  color: C.gold,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 1,
+                )),
+            const SizedBox(height: 8),
+            const Text(
+              'This feature requires a PRO subscription.',
+              style: TextStyle(color: C.tSec, fontSize: 13),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton(
+              onPressed: onUnlock,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: C.gold,
+                foregroundColor: Colors.black,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+              child: const Text('Upgrade to PRO',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w900, letterSpacing: .5)),
+            ),
+          ]),
+        )),
+      );
+}
+
+// ──────────────────────────────────────────────
+// PRO UPGRADE SHEET
+// ──────────────────────────────────────────────
+class _ProSheet extends StatelessWidget {
+  final ProductDetails? annual, monthly;
+  final bool busy, iapReady;
+  final VoidCallback onBuyAnnual, onBuyMonthly, onRestore;
+
+  const _ProSheet({
+    required this.annual,
+    required this.monthly,
+    required this.busy,
+    required this.iapReady,
+    required this.onBuyAnnual,
+    required this.onBuyMonthly,
+    required this.onRestore,
+  });
+
+  @override
+  Widget build(BuildContext ctx) {
+    const feats = [
+      (Icons.star_rounded, 'Gold Detection Algorithm', true),
+      (Icons.analytics_rounded, 'Advanced Field Analytics', true),
+      (Icons.download_rounded, 'Unlimited CSV Export', true),
+      (Icons.tune_rounded, 'Gold Threshold Control', true),
+      (Icons.radar_rounded, 'Basic Scanning', false),
+      (Icons.settings_rounded, 'Calibration Controls', false),
+    ];
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          24, 20, 24, MediaQuery.of(ctx).viewInsets.bottom + 40),
+      child: SingleChildScrollView(
+          child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                  color: C.border, borderRadius: BorderRadius.circular(2))),
+          const SizedBox(height: 22),
+          const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(Icons.star_rounded, color: C.gold, size: 22),
+            SizedBox(width: 8),
+            Text('SPECTRA PRO',
+                style: TextStyle(
+                  color: C.gold,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 2.5,
+                )),
+          ]),
+          const SizedBox(height: 6),
+          const Text('Professional metal & gold detector',
+              style: TextStyle(color: C.tSec, fontSize: 12)),
+          const SizedBox(height: 22),
+          ...feats.map((f) {
+            final (ic, lbl, pro) = f;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 11),
               child: Row(children: [
-                Icon(
-                  s._btConnected
-                      ? Icons.bluetooth_connected_rounded
-                      : Icons.bluetooth_disabled_rounded,
-                  color: s._btConnected ? AppColors.green : AppColors.textSec,
-                  size: 22,
-                ),
+                Icon(ic, color: pro ? C.gold : C.tDim, size: 18),
                 const SizedBox(width: 12),
                 Expanded(
-                    child: Text(s._btStatus,
+                    child: Text(lbl,
                         style: TextStyle(
-                          color: s._btConnected
-                              ? AppColors.green
-                              : AppColors.textSec,
-                          fontSize: 13,
-                        ))),
-                if (s._btConnected)
-                  GestureDetector(
-                    onTap: s._disconnectBt,
-                    child: const Icon(Icons.close_rounded,
-                        color: AppColors.red, size: 18),
-                  ),
+                            color: pro ? C.tPrim : C.tSec, fontSize: 13))),
+                Icon(Icons.check_circle_rounded,
+                    color: pro ? C.gold : C.tDim.withOpacity(0.4), size: 16),
               ]),
-            ),
-
-            const SizedBox(height: 12),
-
-            // BT data
-            if (s._btConnected && s._btData != null)
+            );
+          }),
+          const SizedBox(height: 22),
+          if (busy)
+            const Center(
+                child: Column(children: [
+              CircularProgressIndicator(color: C.gold),
+              SizedBox(height: 10),
+              Text('Processing…', style: TextStyle(color: C.tSec)),
+            ]))
+          else if (!iapReady)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: C.border.withOpacity(0.3),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'Store unavailable. Check internet connection.',
+                style: TextStyle(color: C.tSec, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+            )
+          else ...[
+            if (annual != null)
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: onBuyAnnual,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: C.gold,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(13)),
+                  ),
+                  child: Column(children: [
+                    Text('Annual – ${annual!.price}',
+                        style: const TextStyle(
+                            fontWeight: FontWeight.w900, fontSize: 16)),
+                    const Text('Best value • ~40% savings',
+                        style: TextStyle(fontSize: 11, color: Colors.black87)),
+                  ]),
+                ),
+              ),
+            if (annual != null) const SizedBox(height: 10),
+            if (monthly != null)
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: onBuyMonthly,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: C.gold,
+                    side: const BorderSide(color: C.gold),
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(13)),
+                  ),
+                  child: Text('Monthly – ${monthly!.price} / month',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 13)),
+                ),
+              ),
+            if (annual == null && monthly == null)
               Container(
                 padding: const EdgeInsets.all(14),
                 decoration: BoxDecoration(
-                  color: AppColors.gold.withOpacity(0.07),
+                  color: C.border.withOpacity(0.3),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.gold.withOpacity(0.3)),
                 ),
-                child: Column(children: [
-                  _BtMetricRow(
-                      'Büyüklük',
-                      '${s._btData!.magnitude.toStringAsFixed(2)} µT',
-                      AppColors.gold),
-                  const SizedBox(height: 8),
-                  _BtMetricRow(
-                      'Sinyal',
-                      '${s._btData!.signal.toStringAsFixed(1)} µT',
-                      AppColors.cyan),
-                  const SizedBox(height: 8),
-                  _BtMetricRow(
-                      'Ham Veri',
-                      s._btData!.raw
-                          .substring(0, min(s._btData!.raw.length, 40)),
-                      AppColors.textSec),
-                ]),
-              ),
-
-            const SizedBox(height: 12),
-
-            // Scan button
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: s._btScanning ? null : s._startBtScan,
-                icon: Icon(
-                    s._btScanning ? Icons.stop_rounded : Icons.search_rounded),
-                label: Text(s._btScanning ? 'Taranıyor...' : 'Cihaz Tara'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.cyan.withOpacity(0.15),
-                  foregroundColor: AppColors.cyan,
-                  side: const BorderSide(color: AppColors.cyan, width: 0.5),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10)),
+                child: const Text(
+                  'Products could not be loaded.\n'
+                  'Check product IDs in Play Console:\n'
+                  '  • spectra_pro_annual\n'
+                  '  • spectra_pro_monthly',
+                  style: TextStyle(color: C.tSec, fontSize: 11),
+                  textAlign: TextAlign.center,
                 ),
               ),
+            const SizedBox(height: 10),
+            TextButton(
+              onPressed: onRestore,
+              child: const Text('Restore Purchases',
+                  style: TextStyle(color: C.tSec, fontSize: 12)),
             ),
-          ]),
-        ),
-
-        // Results
-        Expanded(
-          child: s._btResults.isEmpty
-              ? Center(
-                  child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                      Icon(Icons.bluetooth_searching_rounded,
-                          color: AppColors.textDim, size: 40),
-                      const SizedBox(height: 12),
-                      const Text('Cihaz taraması başlatın',
-                          style: TextStyle(color: AppColors.textSec)),
-                    ]))
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 100),
-                  itemCount: s._btResults.length,
-                  itemBuilder: (ctx, i) {
-                    final r = s._btResults[i];
-                    final name = r.device.platformName.isEmpty
-                        ? 'Bilinmeyen (${r.device.remoteId})'
-                        : r.device.platformName;
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      decoration: BoxDecoration(
-                        color: AppColors.card,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: ListTile(
-                        leading: const Icon(Icons.sensors_rounded,
-                            color: AppColors.cyan, size: 20),
-                        title: Text(name,
-                            style: const TextStyle(
-                              fontSize: 13,
-                              color: AppColors.textPrim,
-                              fontWeight: FontWeight.w600,
-                            )),
-                        subtitle: Text('RSSI: ${r.rssi} dBm',
-                            style: const TextStyle(
-                              fontSize: 11,
-                              color: AppColors.textSec,
-                              fontFamily: AppText.mono,
-                            )),
-                        trailing: ElevatedButton(
-                          onPressed: () => s._connectBt(r.device),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.cyan.withOpacity(0.15),
-                            foregroundColor: AppColors.cyan,
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 6),
-                            textStyle: const TextStyle(fontSize: 11),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                          ),
-                          child: const Text('Bağlan'),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-        ),
-      ]),
-    );
-  }
-}
-
-Widget _BtMetricRow(String label, String value, Color col) {
-  return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-    Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSec)),
-    Text(value,
-        style: TextStyle(
-          fontSize: 12,
-          color: col,
-          fontFamily: AppText.mono,
-          fontWeight: FontWeight.w600,
-        )),
-  ]);
-}
-
-// ─────────────────────────────────────────────
-//  PRO LOCK PAGE
-// ─────────────────────────────────────────────
-class _ProLockPage extends StatelessWidget {
-  final VoidCallback onUnlock;
-  final String featureName;
-  const _ProLockPage({required this.onUnlock, required this.featureName});
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Center(
-          child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Container(
-            width: 80,
-            height: 80,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.gold.withOpacity(0.1),
-              border: Border.all(
-                  color: AppColors.gold.withOpacity(0.4), width: 1.5),
-            ),
-            child:
-                const Icon(Icons.lock_rounded, color: AppColors.gold, size: 36),
-          ),
-          const SizedBox(height: 24),
-          Text(featureName,
-              style: const TextStyle(
-                color: AppColors.gold,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1,
-              )),
-          const SizedBox(height: 8),
+          ],
+          const SizedBox(height: 4),
           const Text(
-            'Bu özellik PRO abonelik gerektirir.',
-            style: TextStyle(color: AppColors.textSec, fontSize: 13),
+            'Subscriptions renew automatically. Cancel anytime in Google Play.',
+            style: TextStyle(color: C.tDim, fontSize: 10),
             textAlign: TextAlign.center,
           ),
-          const SizedBox(height: 32),
-          ElevatedButton(
-            onPressed: onUnlock,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.gold,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-            child: const Text('PRO\'ya Yükselt',
-                style: TextStyle(
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 0.5,
-                )),
-          ),
-        ]),
+        ],
       )),
     );
   }
 }
 
-// ─────────────────────────────────────────────
-//  PRO UPGRADE SHEET
-// ─────────────────────────────────────────────
-class _ProUpgradeSheet extends StatelessWidget {
-  final VoidCallback onUpgrade;
-  const _ProUpgradeSheet({required this.onUpgrade});
-
-  @override
-  Widget build(BuildContext context) {
-    final features = [
-      (Icons.star_rounded, 'Altın Tespit Algoritması', true),
-      (Icons.bluetooth_rounded, 'Bluetooth Sensör Desteği', true),
-      (Icons.analytics_rounded, 'Gelişmiş Alan Analizi', true),
-      (Icons.download_rounded, 'Sınırsız Veri Dışa Aktarım', true),
-      (Icons.radar_rounded, 'Temel Tarama', false),
-      (Icons.settings_rounded, 'Kalibrasyon Ayarları', false),
-    ];
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(24, 20, 24, 40),
-      child: Column(mainAxisSize: MainAxisSize.min, children: [
-        Container(
-          width: 40,
-          height: 4,
-          decoration: BoxDecoration(
-            color: AppColors.border,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(height: 20),
-        const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(Icons.star, color: AppColors.gold, size: 20),
-          SizedBox(width: 8),
-          Text('SPECTRA PRO',
-              style: TextStyle(
-                color: AppColors.gold,
-                fontSize: 20,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 2,
-              )),
-        ]),
-        const SizedBox(height: 6),
-        const Text('Profesyonel metal ve altın dedektörü',
-            style: TextStyle(color: AppColors.textSec, fontSize: 12)),
-        const SizedBox(height: 24),
-        ...features.map((f) {
-          final (icon, label, isPro) = f;
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: Row(children: [
-              Icon(icon,
-                  color: isPro ? AppColors.gold : AppColors.textSec, size: 18),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: Text(label,
-                      style: TextStyle(
-                        color: isPro ? AppColors.textPrim : AppColors.textSec,
-                        fontSize: 13,
-                      ))),
-              if (isPro)
-                const Icon(Icons.check_circle_rounded,
-                    color: AppColors.gold, size: 16)
-              else
-                Icon(Icons.check_circle_rounded,
-                    color: AppColors.textDim.withOpacity(0.5), size: 16),
-            ]),
-          );
-        }),
-        const SizedBox(height: 24),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: onUpgrade,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.gold,
-              foregroundColor: Colors.black,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-            ),
-            child: const Text('PRO\'ya Geç – ₺149.99/yıl',
-                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
-          ),
-        ),
-        const SizedBox(height: 10),
-        const Text('İstediğiniz zaman iptal edebilirsiniz.',
-            style: TextStyle(color: AppColors.textDim, fontSize: 11)),
-      ]),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────
-//  SETTINGS PAGE
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// SETTINGS PAGE
+// ──────────────────────────────────────────────
 class _SettingsPage extends StatelessWidget {
-  final _RootShellState s;
+  final _ShellState s;
   const _SettingsPage({required this.s});
 
   @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: SingleChildScrollView(
-        physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const _PageTitle(title: 'AYARLAR'),
-          const SizedBox(height: 16),
-
-          // Sensor
-          _SettingsGroup(title: 'SENSÖR', children: [
-            _SliderTile(
-              label: 'Hassasiyet',
-              value: s._sensitivity,
-              min: 2,
-              max: 25,
-              unit: 'x',
-              onChanged: (v) {
-                s.setState(() => s._sensitivity = v);
-                s._savePrefs();
-              },
-            ),
-            _SliderTile(
-              label: 'Uyarı Eşiği',
-              value: s._alertThr,
-              min: 10,
-              max: 70,
-              unit: 'µT',
-              onChanged: (v) {
-                s.setState(() => s._alertThr = v);
-                s._savePrefs();
-              },
-            ),
-            _SliderTile(
-              label: 'Güçlü Sinyal',
-              value: s._strongThr,
-              min: 40,
-              max: 120,
-              unit: 'µT',
-              onChanged: (v) {
-                s.setState(() => s._strongThr = v);
-                s._savePrefs();
-              },
-            ),
-            if (s._tier == SubscriptionTier.pro)
+  Widget build(BuildContext ctx) => SafeArea(
+        child: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const _Lbl(t: 'SETTINGS', big: true),
+            const SizedBox(height: 16),
+            _Group(title: 'DETECTION THRESHOLDS', children: [
               _SliderTile(
-                label: 'Altın Eşiği ⭐',
-                value: s._goldThr,
-                min: 60,
-                max: 120,
-                unit: 'µT',
-                color: AppColors.gold,
-                onChanged: (v) {
-                  s.setState(() => s._goldThr = v);
+                lbl: 'Sensitivity',
+                v: s._sens,
+                mn: 1.0,
+                mx: 30.0,
+                u: '×',
+                onChg: (v) {
+                  s.setState(() => s._sens = v);
                   s._savePrefs();
                 },
               ),
-          ]),
-
-          const SizedBox(height: 16),
-
-          // Feedback
-          _SettingsGroup(title: 'GERİ BİLDİRİM', children: [
-            _SwitchTile(
-              label: 'Ses Uyarıları',
-              icon: Icons.volume_up_rounded,
-              value: s._soundOn,
-              onChanged: (v) {
-                s.setState(() => s._soundOn = v);
-                s._audio.setVolume(v ? 0.8 : 0.0);
-                s._savePrefs();
-              },
-            ),
-            _SwitchTile(
-              label: 'Titreşim Uyarıları',
-              icon: Icons.vibration_rounded,
-              value: s._vibOn,
-              onChanged: (v) {
-                s.setState(() => s._vibOn = v);
-                s._savePrefs();
-              },
-            ),
-            _SwitchTile(
-              label: 'Otomatik Kalibrasyon',
-              icon: Icons.autorenew_rounded,
-              value: s._autoCalib,
-              onChanged: (v) {
-                s.setState(() => s._autoCalib = v);
-                s._savePrefs();
-              },
-            ),
-          ]),
-
-          const SizedBox(height: 16),
-
-          // Info
-          _SettingsGroup(title: 'BİLGİ', children: [
-            _InfoRow('Baz Çizgi', '${s._baseline.toStringAsFixed(2)} µT'),
-            _InfoRow('Veri Noktası', '${s._dataPoints}'),
-            _InfoRow('Abonelik',
-                s._tier == SubscriptionTier.pro ? '⭐ PRO' : 'Ücretsiz'),
-            _InfoRow('Sürüm', '2.4.1'),
-          ]),
-
-          const SizedBox(height: 16),
-
-          // Upgrade button (free users)
-          if (s._tier == SubscriptionTier.free)
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: s._showProWall,
-                icon: const Icon(Icons.star_rounded, size: 18),
-                label: const Text('PRO\'ya Yükselt'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.gold.withOpacity(0.15),
-                  foregroundColor: AppColors.gold,
-                  side: const BorderSide(color: AppColors.gold, width: 0.5),
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+              _SliderTile(
+                lbl: 'Alert Threshold',
+                v: s._alertT,
+                mn: 5.0,
+                mx: 80.0,
+                u: 'µT',
+                info: 'Minimum signal to trigger detection',
+                onChg: (v) {
+                  s.setState(() => s._alertT = v);
+                  s._savePrefs();
+                },
+              ),
+              _SliderTile(
+                lbl: 'Strong Signal',
+                v: s._strongT,
+                mn: 30.0,
+                mx: 150.0,
+                u: 'µT',
+                info: 'Above this = ferrous classification',
+                onChg: (v) {
+                  s.setState(() => s._strongT = v);
+                  s._savePrefs();
+                },
+              ),
+              if (s._tier == Tier.pro)
+                _SliderTile(
+                  lbl: 'Gold Threshold ⭐',
+                  v: s._goldT,
+                  mn: 50.0,
+                  mx: 150.0,
+                  u: 'µT',
+                  col: C.gold,
+                  info: 'PRO: gold-specific classification level',
+                  onChg: (v) {
+                    s.setState(() => s._goldT = v);
+                    s._savePrefs();
+                  },
+                ),
+            ]),
+            const SizedBox(height: 16),
+            _Group(title: 'FEEDBACK', children: [
+              _SwitchTile(
+                lbl: 'Audio Alerts',
+                ic: Icons.volume_up_rounded,
+                v: s._sndOn,
+                onChg: (v) {
+                  s.setState(() => s._sndOn = v);
+                  s._audio.setVolume(v ? 0.85 : 0.0);
+                  s._savePrefs();
+                },
+              ),
+              _SwitchTile(
+                lbl: 'Vibration Alerts',
+                ic: Icons.vibration_rounded,
+                v: s._vibOn,
+                onChg: (v) {
+                  s.setState(() => s._vibOn = v);
+                  s._savePrefs();
+                },
+              ),
+              _SwitchTile(
+                lbl: 'Auto-Calibrate on Start',
+                ic: Icons.autorenew_rounded,
+                v: s._autoC,
+                onChg: (v) {
+                  s.setState(() => s._autoC = v);
+                  s._savePrefs();
+                },
+              ),
+            ]),
+            const SizedBox(height: 16),
+            _Group(title: 'SENSOR STATUS', children: [
+              _InfoRow('Baseline', '${s._baseline.toStringAsFixed(3)} µT'),
+              _InfoRow('Noise Floor', '${s._noiseFloor.toStringAsFixed(3)} µT'),
+              _InfoRow('Min Measured',
+                  '${s._mMin == 9999 ? "—" : "${s._mMin.toStringAsFixed(2)} µT"}'),
+              _InfoRow('Max Measured', '${s._mMax.toStringAsFixed(2)} µT'),
+              _InfoRow('Total Samples', '${s._totalSamples}'),
+              _InfoRow('Readings Stored', '${s._readings.length}'),
+            ]),
+            const SizedBox(height: 16),
+            _Group(title: 'SUBSCRIPTION', children: [
+              _InfoRow('Plan', s._tier == Tier.pro ? '⭐ PRO' : 'Free'),
+              _InfoRow('Annual ID', IAP.annual),
+              _InfoRow('Monthly ID', IAP.monthly),
+              _InfoRow('App Version', '3.0.0'),
+            ]),
+            const SizedBox(height: 16),
+            if (s._tier == Tier.free) ...[
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: s._showProWall,
+                  icon: const Icon(Icons.star_rounded, size: 18),
+                  label: const Text('Upgrade to PRO'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: C.gold.withOpacity(0.13),
+                    foregroundColor: C.gold,
+                    side: const BorderSide(color: C.gold, width: .8),
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(13)),
+                  ),
                 ),
               ),
-            ),
-        ]),
-      ),
-    );
-  }
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton(
+                  onPressed: s._restorePurchases,
+                  child: const Text('Restore Purchases',
+                      style: TextStyle(color: C.tSec)),
+                ),
+              ),
+            ],
+          ]),
+        ),
+      );
 }
 
-class _SettingsGroup extends StatelessWidget {
+class _Group extends StatelessWidget {
   final String title;
   final List<Widget> children;
-  const _SettingsGroup({required this.title, required this.children});
+  const _Group({required this.title, required this.children});
 
   @override
-  Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text(title,
-          style: const TextStyle(
-            color: AppColors.cyan,
-            fontSize: 10,
-            letterSpacing: 2,
-            fontWeight: FontWeight.w600,
-          )),
-      const SizedBox(height: 8),
-      Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: AppColors.card,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppColors.border),
-        ),
-        child: Column(children: children),
-      ),
-    ]);
-  }
+  Widget build(BuildContext ctx) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title,
+              style: const TextStyle(
+                color: C.cyan,
+                fontSize: 9.5,
+                letterSpacing: 2.2,
+                fontWeight: FontWeight.w700,
+              )),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: C.card,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: C.border),
+            ),
+            child: Column(children: children),
+          ),
+        ],
+      );
 }
 
 class _SliderTile extends StatelessWidget {
-  final String label, unit;
-  final double value, min, max;
-  final Color color;
-  final ValueChanged<double> onChanged;
-  const _SliderTile(
-      {required this.label,
-      required this.value,
-      required this.min,
-      required this.max,
-      required this.unit,
-      required this.onChanged,
-      this.color = AppColors.cyan});
+  final String lbl, u;
+  final String? info;
+  final double v, mn, mx;
+  final Color col;
+  final ValueChanged<double> onChg;
+
+  const _SliderTile({
+    required this.lbl,
+    required this.v,
+    required this.mn,
+    required this.mx,
+    required this.u,
+    required this.onChg,
+    this.info,
+    this.col = C.cyan,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-          Text(label,
-              style: const TextStyle(
-                fontSize: 13,
-                color: AppColors.textPrim,
-              )),
-          Text('${value.toStringAsFixed(1)} $unit',
-              style: TextStyle(
-                fontSize: 13,
-                color: color,
-                fontFamily: AppText.mono,
-                fontWeight: FontWeight.w700,
-              )),
+  Widget build(BuildContext ctx) => Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            Expanded(
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                  Text(lbl,
+                      style: const TextStyle(fontSize: 13, color: C.tPrim)),
+                  if (info != null)
+                    Text(info!,
+                        style: const TextStyle(fontSize: 9.5, color: C.tDim)),
+                ])),
+            Text('${v.toStringAsFixed(1)} $u',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: col,
+                  fontFamily: C.mono,
+                  fontWeight: FontWeight.w700,
+                )),
+          ]),
+          Slider(
+              value: v,
+              min: mn,
+              max: mx,
+              divisions: ((mx - mn) * 2).toInt(),
+              onChanged: onChg,
+              activeColor: col),
         ]),
-        Slider(
-          value: value,
-          min: min,
-          max: max,
-          divisions: ((max - min) * 2).toInt(),
-          onChanged: onChanged,
-          activeColor: color,
-        ),
-      ]),
-    );
-  }
+      );
 }
 
 class _SwitchTile extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final bool value;
-  final ValueChanged<bool> onChanged;
-  const _SwitchTile(
-      {required this.label,
-      required this.icon,
-      required this.value,
-      required this.onChanged});
+  final String lbl;
+  final IconData ic;
+  final bool v;
+  final ValueChanged<bool> onChg;
+
+  const _SwitchTile({
+    required this.lbl,
+    required this.ic,
+    required this.v,
+    required this.onChg,
+  });
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(children: [
-        Icon(icon, color: AppColors.textSec, size: 18),
-        const SizedBox(width: 12),
-        Expanded(
-            child: Text(label,
-                style: const TextStyle(
-                  fontSize: 13,
-                  color: AppColors.textPrim,
-                ))),
-        Switch(value: value, onChanged: onChanged),
-      ]),
-    );
-  }
+  Widget build(BuildContext ctx) => Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Row(children: [
+          Icon(ic, color: C.tSec, size: 18),
+          const SizedBox(width: 12),
+          Expanded(
+              child: Text(lbl,
+                  style: const TextStyle(fontSize: 13, color: C.tPrim))),
+          Switch(value: v, onChanged: onChg),
+        ]),
+      );
 }
 
 class _InfoRow extends StatelessWidget {
-  final String label, value;
-  const _InfoRow(this.label, this.value);
+  final String l, v;
+  const _InfoRow(this.l, this.v);
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-        Text(label,
+  Widget build(BuildContext ctx) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child:
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+          Text(l, style: const TextStyle(fontSize: 12, color: C.tSec)),
+          Flexible(
+              child: Text(
+            v,
             style: const TextStyle(
-              fontSize: 12,
-              color: AppColors.textSec,
-            )),
-        Text(value,
-            style: const TextStyle(
-              fontSize: 12,
-              color: AppColors.textPrim,
-              fontFamily: AppText.mono,
+              fontSize: 11,
+              color: C.tPrim,
+              fontFamily: C.mono,
               fontWeight: FontWeight.w600,
-            )),
-      ]),
-    );
-  }
+            ),
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.right,
+          )),
+        ]),
+      );
 }
 
-// ─────────────────────────────────────────────
-//  DEBUG PAGE
-// ─────────────────────────────────────────────
+// ──────────────────────────────────────────────
+// DEBUG PAGE
+// ──────────────────────────────────────────────
 class _DebugPage extends StatefulWidget {
+  final _ShellState s;
+  const _DebugPage({required this.s});
+
   @override
   State<_DebugPage> createState() => _DebugPageState();
 }
 
 class _DebugPageState extends State<_DebugPage> {
   @override
-  Widget build(BuildContext context) {
-    final logs = AppLog.all;
+  Widget build(BuildContext ctx) {
+    final logs = Log.all;
+
     return SafeArea(
       child: Column(children: [
-        const Padding(
-          padding: EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: _PageTitle(title: 'DEBUG KONSOLU'),
-        ),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(children: [
-            Expanded(
-                child: _DebugBtn(
-              label: 'Temizle',
-              icon: Icons.delete_rounded,
-              color: AppColors.red,
-              onTap: () {
-                AppLog.clear();
-                setState(() {});
-              },
-            )),
-            const SizedBox(width: 10),
-            Expanded(
-                child: _DebugBtn(
-              label: 'Yenile',
-              icon: Icons.refresh_rounded,
-              color: AppColors.cyan,
-              onTap: () => setState(() {}),
-            )),
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Column(children: [
+            const _Lbl(t: 'DEBUG CONSOLE', big: true),
+            const SizedBox(height: 10),
+            Row(children: [
+              Expanded(
+                  child: _DbgBtn(
+                      lbl: 'Clear',
+                      ic: Icons.delete_rounded,
+                      col: C.red,
+                      tap: () {
+                        Log.clear();
+                        setState(() {});
+                      })),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: _DbgBtn(
+                      lbl: 'Refresh',
+                      ic: Icons.refresh_rounded,
+                      col: C.cyan,
+                      tap: () => setState(() {}))),
+              const SizedBox(width: 10),
+              Expanded(
+                  child: _DbgBtn(
+                      lbl: 'IAP Info',
+                      ic: Icons.store_rounded,
+                      col: C.gold,
+                      tap: () {
+                        Log.i('IAP ready=${widget.s._iapReady}');
+                        Log.i(
+                            'Products: ${widget.s._products.map((p) => "${p.id}:${p.price}").join(",")}');
+                        Log.i('Tier: ${widget.s._tier.name}');
+                        Log.i(
+                            'Baseline: ${widget.s._baseline.toStringAsFixed(3)}');
+                        Log.i(
+                            'NoiseFloor: ${widget.s._noiseFloor.toStringAsFixed(3)}');
+                        setState(() {});
+                      })),
+            ]),
           ]),
         ),
-        const SizedBox(height: 8),
+        Container(height: 1, color: C.border),
         Expanded(
           child: logs.isEmpty
               ? const Center(
-                  child: Text('Log yok',
-                      style: TextStyle(color: AppColors.textDim)))
+                  child: Text('No logs', style: TextStyle(color: C.tDim)))
               : ListView.builder(
                   reverse: true,
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
                   itemCount: logs.length,
                   itemBuilder: (_, i) {
                     final log = logs[logs.length - 1 - i];
-                    Color col = AppColors.textSec;
+                    Color col = C.tSec;
                     if (log.contains('❌'))
-                      col = AppColors.red;
+                      col = C.red;
                     else if (log.contains('✅'))
-                      col = AppColors.green;
+                      col = C.green;
                     else if (log.contains('🔴'))
-                      col = AppColors.orange;
-                    else if (log.contains('🔵'))
-                      col = AppColors.cyan;
-                    else if (log.contains('⚠️')) col = AppColors.orange;
-                    return Text(
-                      log,
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: col,
-                        fontFamily: AppText.mono,
-                        height: 1.5,
-                      ),
-                    );
+                      col = C.orange;
+                    else if (log.contains('⚠️'))
+                      col = C.orange;
+                    else if (log.contains('🛒')) col = C.gold;
+                    return Text(log,
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          color: col,
+                          fontFamily: C.mono,
+                          height: 1.55,
+                        ));
                   },
                 ),
         ),
@@ -2599,76 +2673,55 @@ class _DebugPageState extends State<_DebugPage> {
   }
 }
 
-class _DebugBtn extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-  const _DebugBtn(
-      {required this.label,
-      required this.icon,
-      required this.color,
-      required this.onTap});
+class _DbgBtn extends StatelessWidget {
+  final String lbl;
+  final IconData ic;
+  final Color col;
+  final VoidCallback tap;
+  const _DbgBtn(
+      {required this.lbl,
+      required this.ic,
+      required this.col,
+      required this.tap});
 
   @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withOpacity(0.4)),
+  Widget build(BuildContext ctx) => GestureDetector(
+        onTap: tap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 10),
+          decoration: BoxDecoration(
+            color: col.withOpacity(0.09),
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: col.withOpacity(0.35)),
+          ),
+          child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(ic, color: col, size: 15),
+            const SizedBox(width: 5),
+            Text(lbl,
+                style: TextStyle(
+                    color: col, fontSize: 11, fontWeight: FontWeight.w700)),
+          ]),
         ),
-        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(icon, color: color, size: 16),
-          const SizedBox(width: 6),
-          Text(label,
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              )),
-        ]),
-      ),
-    );
-  }
+      );
 }
 
-// ─────────────────────────────────────────────
-//  SHARED WIDGETS
-// ─────────────────────────────────────────────
-class _PageTitle extends StatelessWidget {
-  final String title;
-  const _PageTitle({required this.title});
+// ──────────────────────────────────────────────
+// SHARED MICRO WIDGETS
+// ──────────────────────────────────────────────
+class _Lbl extends StatelessWidget {
+  final String t;
+  final bool big;
+  const _Lbl({required this.t, this.big = false});
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: double.infinity,
-      child: Text(title,
-          style: const TextStyle(
-            color: AppColors.textSec,
-            fontSize: 11,
-            letterSpacing: 3,
-            fontWeight: FontWeight.w600,
-          )),
-    );
-  }
-}
-
-class _SectionLabel extends StatelessWidget {
-  final String text;
-  const _SectionLabel(this.text);
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(text,
-        style: const TextStyle(
-          color: AppColors.textSec,
-          fontSize: 10,
-          letterSpacing: 2,
-        ));
-  }
+  Widget build(BuildContext ctx) => SizedBox(
+        width: double.infinity,
+        child: Text(t,
+            style: TextStyle(
+              color: C.tSec,
+              fontSize: big ? 11 : 9.5,
+              letterSpacing: 3,
+              fontWeight: FontWeight.w700,
+            )),
+      );
 }
