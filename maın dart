@@ -34,9 +34,9 @@ class AdIds {
 // IAP PRODUCT IDs
 // ══════════════════════════════════════════════════════════════
 class IAPIds {
-  static const String proMonthly = 'spectra_pro_monthly_2026';
-  static const String proAnnual = 'spectra_pro_annual_2026';
-  static const String proLifetime = 'spectra_pro_lifetime_2026';
+  static const String proMonthly = 'spectra.pro.monthly';
+  static const String proAnnual = 'spectra.pro.annual';
+  static const String proLifetime = 'spectra.pro.lifetime';
   static const Set<String> all = {proMonthly, proAnnual, proLifetime};
 }
 
