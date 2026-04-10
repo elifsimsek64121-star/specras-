@@ -22,21 +22,21 @@ void main() async {
 }
 
 // ══════════════════════════════════════════════════════════════
-// AD IDs
+// AD IDs  (test IDs — replace with real ones before release)
 // ══════════════════════════════════════════════════════════════
 class AdIds {
-  static const String bannerId = 'ca-app-pub-3940256099942544/6300978111';
-  static const String interstitialId = 'ca-app-pub-3940256099942544/1033173712';
-  static const String rewardedId = 'ca-app-pub-3940256099942544/5224354917';
+  static const String bannerId = 'ca-app-pub-6551908952762916/1522350327';
+  static const String interstitialId = 'ca-app-pub-6551908952762916/1821733220';
+  static const String rewardedId = 'ca-app-pub-6551908952762916/8522872942';
 }
 
 // ══════════════════════════════════════════════════════════════
 // IAP PRODUCT IDs
 // ══════════════════════════════════════════════════════════════
 class IAPIds {
-  static const String proMonthly = 'spectra_pro_monthly_2024';
-  static const String proAnnual = 'spectra_pro_annual_2024';
-  static const String proLifetime = 'spectra_pro_lifetime_2024';
+  static const String proMonthly = 'spectra_pro_monthly_2026';
+  static const String proAnnual = 'spectra_pro_annual_2026';
+  static const String proLifetime = 'spectra_pro_lifetime_2026';
   static const Set<String> all = {proMonthly, proAnnual, proLifetime};
 }
 
@@ -119,7 +119,7 @@ class DetectionEvent {
   });
 }
 
-enum Tier { free, monthly, annual, lifetime }
+enum Tier { free, monthly, annual, lifetime, rewarded }
 
 // ══════════════════════════════════════════════════════════════
 // SHOPPING CART
@@ -190,11 +190,11 @@ class AdManager {
         onAdLoaded: (ad) {
           bannerAd = ad as BannerAd;
           bannerLoaded = true;
-          Log.i('Banner yüklendi');
+          Log.i('Banner loaded');
         },
         onAdFailedToLoad: (ad, err) {
           ad.dispose();
-          Log.i('Banner hatası: ${err.code}');
+          Log.i('Banner error: ${err.code}');
           Future.delayed(const Duration(seconds: 30), loadBanner);
         },
       ),
@@ -209,10 +209,10 @@ class AdManager {
       adLoadCallback: InterstitialAdLoadCallback(
         onAdLoaded: (ad) {
           interstitialAd = ad;
-          Log.i('Interstitial yüklendi');
+          Log.i('Interstitial loaded');
         },
         onAdFailedToLoad: (e) {
-          Log.i('Interstitial hatası: ${e.code}');
+          Log.i('Interstitial error: ${e.code}');
           Future.delayed(const Duration(seconds: 30), loadInterstitial);
         },
       ),
@@ -248,10 +248,10 @@ class AdManager {
       rewardedAdLoadCallback: RewardedAdLoadCallback(
         onAdLoaded: (ad) {
           rewardedAd = ad;
-          Log.i('Rewarded yüklendi');
+          Log.i('Rewarded loaded');
         },
         onAdFailedToLoad: (e) {
-          Log.i('Rewarded hatası: ${e.code}');
+          Log.i('Rewarded error: ${e.code}');
           Future.delayed(const Duration(seconds: 30), loadRewarded);
         },
       ),
@@ -277,7 +277,7 @@ class AdManager {
       },
     );
     ad.show(onUserEarnedReward: (_, __) {
-      Log.i('Ödül kazanıldı');
+      Log.i('Reward earned — 2 min PRO granted');
       onEarned();
     });
   }
@@ -362,6 +362,10 @@ class _ShellState extends State<_Shell>
   StreamSubscription<List<PurchaseDetails>>? _iapSub;
   Map<String, ProductDetails> _products = {};
 
+  // ── Rewarded PRO timer
+  Timer? _rewardedProTimer;
+  DateTime? _rewardedProExpiry;
+
   // ── DSP
   static const int _HIST = 300;
   static const double _EMA_F = 0.15;
@@ -375,7 +379,7 @@ class _ShellState extends State<_Shell>
   double _baseline = 50, _noiseFloor = 1.5;
   bool _caling = false, _calDone = false;
   int _calPct = 0;
-  String _calMsg = 'Sensör bekleniyor…';
+  String _calMsg = 'Waiting for sensor…';
 
   double _signal = 0;
   double _mMin = 9999, _mMax = 0;
@@ -418,9 +422,17 @@ class _ShellState extends State<_Shell>
   late SharedPreferences _prefs;
   StreamSubscription<MagnetometerEvent>? _magSub;
 
+  // ── Computed
   bool get _isPro => _tier != Tier.free;
 
-  // ── Public navigation helper (kullanım: _navigateTo(index))
+  // Remaining rewarded seconds for display
+  int get _rewardedSecsLeft {
+    if (_tier != Tier.rewarded || _rewardedProExpiry == null) return 0;
+    final rem = _rewardedProExpiry!.difference(DateTime.now()).inSeconds;
+    return rem < 0 ? 0 : rem;
+  }
+
+  // ── Navigation helper
   void navigateTo(int index) {
     if (!mounted) return;
     setState(() => _tab = index);
@@ -438,11 +450,8 @@ class _ShellState extends State<_Shell>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused) {
-      _magSub?.pause();
-    } else if (state == AppLifecycleState.resumed) {
-      _magSub?.resume();
-    }
+    if (state == AppLifecycleState.paused) _magSub?.pause();
+    if (state == AppLifecycleState.resumed) _magSub?.resume();
   }
 
   // ── Boot
@@ -458,11 +467,11 @@ class _ShellState extends State<_Shell>
     _iapSub = _iap.purchaseStream.listen(_onPurchase);
     _iapReady = await _iap.isAvailable();
     if (_iapReady) {
-      Log.i('IAP hazır');
+      Log.i('IAP available');
       await _loadProducts();
       await _iap.restorePurchases();
     } else {
-      Log.i('IAP kullanılamıyor');
+      Log.i('IAP unavailable');
     }
 
     // Audio
@@ -470,9 +479,9 @@ class _ShellState extends State<_Shell>
       await _audio.setAsset('assets/beep.mp3');
       await _audio.setLoopMode(LoopMode.one);
       await _audio.setVolume(0.0);
-      Log.i('Ses sistemi hazır');
+      Log.i('Audio system ready');
     } catch (e) {
-      Log.i('Ses hatası: $e');
+      Log.i('Audio error: $e');
     }
 
     // Ads
@@ -489,7 +498,7 @@ class _ShellState extends State<_Shell>
     if (mounted && _autoC) await _runCalibration();
 
     Log.i('╔══════════════════════════════╗');
-    Log.i('║     BOOT BAŞARILI ✅         ║');
+    Log.i('║     BOOT SUCCESS ✅          ║');
     Log.i('╚══════════════════════════════╝');
   }
 
@@ -503,9 +512,12 @@ class _ShellState extends State<_Shell>
     _strongT = _prefs.getDouble('str') ?? 55.0;
     _audioVol = _prefs.getDouble('audVol') ?? 0.85;
     final ts = _prefs.getString('tier') ?? 'free';
-    _tier =
-        Tier.values.firstWhere((t) => t.name == ts, orElse: () => Tier.free);
-    Log.i('Tercihler yüklendi: tier=${_tier.name}');
+    // Never persist rewarded tier across sessions
+    _tier = Tier.values.firstWhere(
+      (t) => t.name == ts && t != Tier.rewarded,
+      orElse: () => Tier.free,
+    );
+    Log.i('Preferences loaded: tier=${_tier.name}');
   }
 
   void _savePrefs() {
@@ -517,7 +529,56 @@ class _ShellState extends State<_Shell>
       ..setDouble('alt', _alertT)
       ..setDouble('str', _strongT)
       ..setDouble('audVol', _audioVol)
-      ..setString('tier', _tier.name);
+      ..setString('tier', _tier == Tier.rewarded ? 'free' : _tier.name);
+  }
+
+  // ── Rewarded PRO (2 minutes)
+  void _activateRewardedPro() {
+    _rewardedProTimer?.cancel();
+    const dur = Duration(minutes: 2);
+    setState(() {
+      _tier = Tier.rewarded;
+      _rewardedProExpiry = DateTime.now().add(dur);
+    });
+    Log.i('Rewarded PRO activated — 2 min');
+    _snack('🎉 2-Minute PRO unlocked! Enjoy all features.', C.green);
+
+    _rewardedProTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      final rem = _rewardedProExpiry!.difference(DateTime.now());
+      if (rem.isNegative) {
+        t.cancel();
+        _expireRewardedPro();
+      } else {
+        setState(() {}); // refresh countdown
+      }
+    });
+  }
+
+  void _expireRewardedPro() {
+    if (!mounted) return;
+    setState(() {
+      _tier = Tier.free;
+      _rewardedProExpiry = null;
+    });
+    // Reload ads
+    adManager.loadBanner();
+    adManager.loadInterstitial();
+    adManager.loadRewarded();
+    _snack('PRO trial ended. Watch another ad or subscribe!', C.orange);
+    Log.i('Rewarded PRO expired');
+  }
+
+  void _watchRewardedAd() {
+    if (adManager.rewardedAd == null) {
+      adManager.loadRewarded();
+      _snack('Ad loading… please try again in a moment.', C.tSec);
+      return;
+    }
+    adManager.showRewarded(_activateRewardedPro);
   }
 
   // ── IAP
@@ -525,24 +586,24 @@ class _ShellState extends State<_Shell>
     try {
       final res = await _iap.queryProductDetails(IAPIds.all);
       if (res.notFoundIDs.isNotEmpty) {
-        Log.i('Bulunamayan ürünler: ${res.notFoundIDs}');
+        Log.i('Missing products: ${res.notFoundIDs}');
       }
       if (mounted) {
         setState(() {
           for (final p in res.productDetails) {
             _products[p.id] = p;
-            Log.i('Ürün: ${p.id} — ${p.price}');
+            Log.i('Product: ${p.id} — ${p.price}');
           }
         });
       }
     } catch (e) {
-      Log.i('Ürün yükleme hatası: $e');
+      Log.i('Product load error: $e');
     }
   }
 
   void _onPurchase(List<PurchaseDetails> purchases) async {
     for (final p in purchases) {
-      Log.i('Satın alma: ${p.status} — ${p.productID}');
+      Log.i('Purchase: ${p.status} — ${p.productID}');
       if (p.status == PurchaseStatus.purchased ||
           p.status == PurchaseStatus.restored) {
         _grantPro(p.productID);
@@ -550,13 +611,13 @@ class _ShellState extends State<_Shell>
           try {
             await _iap.completePurchase(p);
           } catch (e) {
-            Log.i('completePurchase hatası: $e');
+            Log.i('completePurchase error: $e');
           }
         }
       } else if (p.status == PurchaseStatus.error) {
-        Log.i('Satın alma hatası: ${p.error?.message}');
+        Log.i('Purchase error: ${p.error?.message}');
         if (mounted) setState(() => _iapBuying = false);
-        _snack('Satın alma başarısız. Tekrar deneyin.', C.red);
+        _snack('Purchase failed. Please try again.', C.red);
       } else if (p.status == PurchaseStatus.canceled) {
         if (mounted) setState(() => _iapBuying = false);
       }
@@ -571,6 +632,7 @@ class _ShellState extends State<_Shell>
     if (productId == IAPIds.proLifetime) t = Tier.lifetime;
     if (t == Tier.free) return;
 
+    _rewardedProTimer?.cancel();
     setState(() {
       _tier = t;
       _iapBuying = false;
@@ -578,24 +640,24 @@ class _ShellState extends State<_Shell>
     _prefs.setString('tier', t.name);
     adManager.disposeAll();
     context.read<ShoppingCart>().clear();
-    _snack('🎉 PRO AKTİF! Tüm özellikler açıldı.', C.green);
-    Log.i('PRO aktif: $t');
+    _snack('🎉 PRO ACTIVE! All features unlocked.', C.green);
+    Log.i('PRO granted: $t');
   }
 
   void _buyProduct(ProductDetails p) {
     if (!_iapReady) {
-      _snack('Satın alma sistemi kullanılamıyor', C.red);
+      _snack('Purchase system unavailable', C.red);
       return;
     }
     setState(() => _iapBuying = true);
-    final param = PurchaseParam(productDetails: p);
-    // Lifetime = consumable değil; abonelikler de buyNonConsumable ile başlatılır
-    _iap.buyNonConsumable(purchaseParam: param).catchError((e) {
-      Log.i('buyNonConsumable hatası: $e');
+    _iap
+        .buyNonConsumable(purchaseParam: PurchaseParam(productDetails: p))
+        .catchError((e) {
+      Log.i('buyNonConsumable error: $e');
       if (mounted) setState(() => _iapBuying = false);
-      _snack('Satın alma başlatılamadı: $e', C.red);
+      _snack('Purchase failed to start: $e', C.red);
     });
-    Log.i('Satın alma başlatıldı: ${p.id}');
+    Log.i('Purchase started: ${p.id}');
   }
 
   void showCart() {
@@ -616,14 +678,14 @@ class _ShellState extends State<_Shell>
   void _processCheckout() {
     final cart = context.read<ShoppingCart>();
     if (cart.items.isEmpty) {
-      _snack('Sepet boş', C.red);
+      _snack('Cart is empty', C.red);
       return;
     }
     final product = _products[cart.items.first.id];
     if (product != null) {
       _buyProduct(product);
     } else {
-      _snack('Ürün bulunamadı — internet bağlantısını kontrol et', C.red);
+      _snack('Product not found — check internet connection', C.red);
     }
   }
 
@@ -659,11 +721,8 @@ class _ShellState extends State<_Shell>
     _magSub?.cancel();
     _magSub = magnetometerEventStream(
       samplingPeriod: SensorInterval.uiInterval,
-    ).listen(
-      _onMagEvent,
-      onError: (e) => Log.i('Manyetometre hatası: $e'),
-    );
-    Log.i('Manyetometre başlatıldı');
+    ).listen(_onMagEvent, onError: (e) => Log.i('Magnetometer error: $e'));
+    Log.i('Magnetometer started');
   }
 
   void _onMagEvent(MagnetometerEvent e) {
@@ -717,7 +776,7 @@ class _ShellState extends State<_Shell>
         _caling = true;
         _calDone = false;
         _calPct = 0;
-        _calMsg = 'Telefonu sabit tutun…';
+        _calMsg = 'Hold device still…';
         _monitoring = false;
         _det = false;
         _signal = 0;
@@ -743,7 +802,7 @@ class _ShellState extends State<_Shell>
         _caling = false;
         _calDone = true;
         _monitoring = true;
-        _calMsg = 'Kalibre edildi — Aktif izleme';
+        _calMsg = 'Calibrated — Active scanning';
       });
     }
   }
@@ -760,7 +819,7 @@ class _ShellState extends State<_Shell>
     _mMin = _baseline;
     _mMax = _baseline;
     _calBuf.clear();
-    Log.i('Baz değer: ${_baseline.toStringAsFixed(3)} µT');
+    Log.i('Baseline: ${_baseline.toStringAsFixed(3)} µT');
   }
 
   // ── Classification
@@ -777,13 +836,13 @@ class _ShellState extends State<_Shell>
           type: _detType,
           conf: _detConf,
           signal: _signal,
-          label: isStrong ? 'DEMİR / ÇELİK' : 'DEMİR DIŞI METAL',
+          label: isStrong ? 'FERROUS / STEEL' : 'NON-FERROUS METAL',
           color: isStrong ? C.red : C.orange,
           icon: isStrong
               ? Icons.bolt_rounded
               : Icons.radio_button_checked_rounded,
         ));
-        Log.i('Tespit: $_detType @ ${_signal.toStringAsFixed(1)}');
+        Log.i('Detection: $_detType @ ${_signal.toStringAsFixed(1)}');
       }
     } else if (_det) {
       _det = false;
@@ -835,11 +894,9 @@ class _ShellState extends State<_Shell>
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          msg,
-          style:
-              const TextStyle(fontWeight: FontWeight.w700, color: Colors.white),
-        ),
+        content: Text(msg,
+            style: const TextStyle(
+                fontWeight: FontWeight.w700, color: Colors.white)),
         backgroundColor: bg,
         behavior: SnackBarBehavior.floating,
         margin: const EdgeInsets.all(12),
@@ -854,6 +911,7 @@ class _ShellState extends State<_Shell>
     _magSub?.cancel();
     _iapSub?.cancel();
     _uiTimer?.cancel();
+    _rewardedProTimer?.cancel();
     _audio.dispose();
     _pulseCtrl.dispose();
     _scanCtrl.dispose();
@@ -897,10 +955,8 @@ class _ShellState extends State<_Shell>
                   children: [
                     CircularProgressIndicator(color: C.cyan, strokeWidth: 2.5),
                     SizedBox(height: 20),
-                    Text(
-                      'İşlem yapılıyor…',
-                      style: TextStyle(color: C.tPrim, fontSize: 15),
-                    ),
+                    Text('Processing…',
+                        style: TextStyle(color: C.tPrim, fontSize: 15)),
                   ],
                 ),
               ),
@@ -956,16 +1012,14 @@ class _ScanPage extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        const Text(
-                          'SPECTRA',
-                          style: TextStyle(
-                            color: C.cyan,
-                            fontSize: 20,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 3,
-                            fontFamily: C.mono,
-                          ),
-                        ),
+                        const Text('SPECTRA',
+                            style: TextStyle(
+                              color: C.cyan,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 3,
+                              fontFamily: C.mono,
+                            )),
                         const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(
@@ -975,38 +1029,35 @@ class _ScanPage extends StatelessWidget {
                             borderRadius: BorderRadius.circular(6),
                             border: Border.all(color: C.cyan.withOpacity(0.4)),
                           ),
-                          child: const Text(
-                            'PRO',
-                            style: TextStyle(
-                              color: C.cyan,
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 1.5,
-                            ),
-                          ),
+                          child: const Text('PRO',
+                              style: TextStyle(
+                                color: C.cyan,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 1.5,
+                              )),
                         ),
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      s._isPro ? '⭐ PRO — Tam Erişim' : 'Ücretsiz Sürüm',
-                      style: TextStyle(
-                        color: s._isPro ? C.green : C.tSec,
-                        fontSize: 10,
-                      ),
-                    ),
+                    _TierStatusBadge(state: s),
                   ],
                 ),
                 if (!s._isPro)
                   GestureDetector(
                     onTap: () => s.showCart(),
                     child: _ProBadge(
-                      count: context.watch<ShoppingCart>().itemCount,
-                    ),
+                        count: context.watch<ShoppingCart>().itemCount),
                   ),
               ],
             ),
           ),
+
+          // ── Rewarded countdown bar (shown only when rewarded PRO active)
+          if (s._tier == Tier.rewarded) _RewardedCountdownBar(state: s),
+
+          // ── Rewarded Ad Banner (shown only for free users)
+          if (!s._isPro) _RewardedAdBanner(state: s),
 
           // ── Cal Status
           Padding(
@@ -1051,6 +1102,162 @@ class _ScanPage extends StatelessWidget {
   }
 }
 
+// ── Tier status text under logo
+class _TierStatusBadge extends StatelessWidget {
+  final _ShellState state;
+  const _TierStatusBadge({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    if (s._tier == Tier.rewarded) {
+      final secs = s._rewardedSecsLeft;
+      final min = secs ~/ 60;
+      final sec = secs % 60;
+      return Text(
+        '⏱ PRO Trial: ${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}',
+        style: const TextStyle(
+            color: C.gold, fontSize: 10, fontWeight: FontWeight.w700),
+      );
+    }
+    if (s._isPro) {
+      return const Text('⭐ PRO — Full Access',
+          style: TextStyle(color: C.green, fontSize: 10));
+    }
+    return const Text('Free Version',
+        style: TextStyle(color: C.tSec, fontSize: 10));
+  }
+}
+
+// ── Rewarded countdown progress bar
+class _RewardedCountdownBar extends StatelessWidget {
+  final _ShellState state;
+  const _RewardedCountdownBar({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    final secs = s._rewardedSecsLeft;
+    final frac = secs / 120.0;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: C.gold.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: C.gold.withOpacity(0.4)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.timer_rounded, color: C.gold, size: 14),
+            const SizedBox(width: 8),
+            const Text('PRO Trial Active',
+                style: TextStyle(
+                    color: C.gold, fontSize: 11, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: frac.clamp(0.0, 1.0),
+                  backgroundColor: C.border,
+                  valueColor: const AlwaysStoppedAnimation<Color>(C.gold),
+                  minHeight: 5,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '${secs}s',
+              style: const TextStyle(
+                  color: C.gold, fontSize: 10, fontFamily: C.mono),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Rewarded Ad Banner (prominent, visible to free users)
+class _RewardedAdBanner extends StatelessWidget {
+  final _ShellState state;
+  const _RewardedAdBanner({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: GestureDetector(
+        onTap: s._watchRewardedAd,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                C.purple.withOpacity(0.18),
+                C.cyan.withOpacity(0.12),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: C.purple.withOpacity(0.55), width: 1.5),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: C.purple.withOpacity(0.15),
+                  border: Border.all(color: C.purple.withOpacity(0.5)),
+                ),
+                child: const Icon(Icons.play_circle_filled_rounded,
+                    color: C.purple, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    Text('🎁 Watch Ad → Get 2-Min PRO FREE',
+                        style: TextStyle(
+                          color: C.tPrim,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        )),
+                    SizedBox(height: 2),
+                    Text('Unlock all PRO features for 2 minutes instantly',
+                        style: TextStyle(color: C.tSec, fontSize: 10)),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: C.purple,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Text('WATCH',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    )),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ProBadge extends StatelessWidget {
   final int count;
   const _ProBadge({required this.count});
@@ -1079,15 +1286,11 @@ class _ProBadge extends StatelessWidget {
                 decoration:
                     const BoxDecoration(color: C.red, shape: BoxShape.circle),
                 child: Center(
-                  child: Text(
-                    '$count',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                    ),
-                  ),
-                ),
+                    child: Text('$count',
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w900))),
               ),
             ),
         ],
@@ -1125,11 +1328,8 @@ class _CalBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(
-              s._calMsg,
-              style: const TextStyle(color: C.tSec, fontSize: 11),
-            ),
-          ),
+              child: Text(s._calMsg,
+                  style: const TextStyle(color: C.tSec, fontSize: 11))),
           if (s._caling) ...[
             SizedBox(
               width: 60,
@@ -1144,14 +1344,9 @@ class _CalBar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
-            Text(
-              '${s._calPct}%',
-              style: const TextStyle(
-                color: C.orange,
-                fontSize: 10,
-                fontFamily: C.mono,
-              ),
-            ),
+            Text('${s._calPct}%',
+                style: const TextStyle(
+                    color: C.orange, fontSize: 10, fontFamily: C.mono)),
           ] else
             GestureDetector(
               onTap: () => s._runCalibration(),
@@ -1163,10 +1358,8 @@ class _CalBar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: C.cyan.withOpacity(0.35)),
                 ),
-                child: const Text(
-                  'Yeniden Kal.',
-                  style: TextStyle(color: C.cyan, fontSize: 10),
-                ),
+                child: const Text('Recalibrate',
+                    style: TextStyle(color: C.cyan, fontSize: 10)),
               ),
             ),
         ],
@@ -1228,16 +1421,13 @@ class _RadarPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final cx = size.width / 2;
-    final cy = size.height / 2;
+    final cx = size.width / 2, cy = size.height / 2;
     final maxR = size.width / 2 - 8;
 
-    // Background rings
     for (final frac in [0.33, 0.66, 1.0]) {
-      final r = maxR * frac;
       canvas.drawCircle(
         Offset(cx, cy),
-        r,
+        maxR * frac,
         Paint()
           ..color = C.border.withOpacity(detected ? 0.5 : 0.25)
           ..style = PaintingStyle.stroke
@@ -1245,44 +1435,41 @@ class _RadarPainter extends CustomPainter {
       );
     }
 
-    // Cross hairs
     final crossPaint = Paint()
       ..color = C.border.withOpacity(0.2)
       ..strokeWidth = 0.6;
     canvas.drawLine(Offset(cx, cy - maxR), Offset(cx, cy + maxR), crossPaint);
     canvas.drawLine(Offset(cx - maxR, cy), Offset(cx + maxR, cy), crossPaint);
 
-    // Scan sweep
-    final sweepPaint = Paint()
-      ..shader = SweepGradient(
-        startAngle: scanAngle - 1.2,
-        endAngle: scanAngle,
-        colors: [
-          sigColor.withOpacity(0.0),
-          sigColor.withOpacity(detected ? 0.22 : 0.1),
-        ],
-        tileMode: TileMode.clamp,
-      ).createShader(Rect.fromCircle(center: Offset(cx, cy), radius: maxR))
-      ..style = PaintingStyle.fill;
-    canvas.drawCircle(Offset(cx, cy), maxR, sweepPaint);
+    canvas.drawCircle(
+      Offset(cx, cy),
+      maxR,
+      Paint()
+        ..shader = SweepGradient(
+          startAngle: scanAngle - 1.2,
+          endAngle: scanAngle,
+          colors: [
+            sigColor.withOpacity(0.0),
+            sigColor.withOpacity(detected ? 0.22 : 0.1)
+          ],
+          tileMode: TileMode.clamp,
+        ).createShader(Rect.fromCircle(center: Offset(cx, cy), radius: maxR))
+        ..style = PaintingStyle.fill,
+    );
 
-    // Scan line
-    final scanPaint = Paint()
-      ..color = sigColor.withOpacity(detected ? 0.8 : 0.4)
-      ..strokeWidth = 1.5;
     canvas.drawLine(
       Offset(cx, cy),
       Offset(cx + cos(scanAngle) * maxR, cy + sin(scanAngle) * maxR),
-      scanPaint,
+      Paint()
+        ..color = sigColor.withOpacity(detected ? 0.8 : 0.4)
+        ..strokeWidth = 1.5,
     );
 
-    // Detection ripples
     if (detected) {
       for (int i = 1; i <= 3; i++) {
-        final r = maxR * (0.3 + i * 0.2) * ripple;
         canvas.drawCircle(
           Offset(cx, cy),
-          r,
+          maxR * (0.3 + i * 0.2) * ripple,
           Paint()
             ..color = sigColor.withOpacity(0.5 * (1 - i * 0.25))
             ..style = PaintingStyle.stroke
@@ -1311,37 +1498,32 @@ class _RadarCenter extends StatelessWidget {
         shape: BoxShape.circle,
         color: sigColor.withOpacity(0.07),
         border: Border.all(
-          color: sigColor.withOpacity(s._det ? 0.9 : 0.4),
-          width: 2,
-        ),
+            color: sigColor.withOpacity(s._det ? 0.9 : 0.4), width: 2),
       ),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(
-            s._signal.toStringAsFixed(1),
-            style: TextStyle(
-              fontSize: 40,
-              fontWeight: FontWeight.w900,
-              color: sigColor,
-              fontFamily: C.mono,
-              height: 1,
-            ),
-          ),
+          Text(s._signal.toStringAsFixed(1),
+              style: TextStyle(
+                fontSize: 40,
+                fontWeight: FontWeight.w900,
+                color: sigColor,
+                fontFamily: C.mono,
+                height: 1,
+              )),
           const SizedBox(height: 4),
           Text(
-            s._det
-                ? (s._detType == 'ferrous' ? 'DEMİR' : 'METAL')
-                : s._calDone
-                    ? 'TARAMA'
-                    : 'KALİBRE',
-            style: TextStyle(
-              fontSize: 9,
-              color: sigColor.withOpacity(0.85),
-              letterSpacing: 2.5,
-              fontFamily: C.mono,
-            ),
-          ),
+              s._det
+                  ? (s._detType == 'ferrous' ? 'FERROUS' : 'METAL')
+                  : s._calDone
+                      ? 'SCANNING'
+                      : 'CALIBRATE',
+              style: TextStyle(
+                fontSize: 9,
+                color: sigColor.withOpacity(0.85),
+                letterSpacing: 2.5,
+                fontFamily: C.mono,
+              )),
         ],
       ),
     );
@@ -1361,61 +1543,49 @@ class _SignalBar extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'SİNYAL',
-              style: TextStyle(color: C.tSec, fontSize: 9, letterSpacing: 2.5),
-            ),
-            Text(
-              '${s._signal.toStringAsFixed(1)} / 100',
-              style:
-                  TextStyle(color: sigColor, fontSize: 11, fontFamily: C.mono),
-            ),
+            const Text('SIGNAL',
+                style:
+                    TextStyle(color: C.tSec, fontSize: 9, letterSpacing: 2.5)),
+            Text('${s._signal.toStringAsFixed(1)} / 100',
+                style: TextStyle(
+                    color: sigColor, fontSize: 11, fontFamily: C.mono)),
           ],
         ),
         const SizedBox(height: 6),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final totalWidth = constraints.maxWidth;
-            return Stack(
-              children: [
-                Container(
-                  height: 10,
-                  width: totalWidth,
-                  decoration: BoxDecoration(
-                    color: C.border,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
+        LayoutBuilder(builder: (context, constraints) {
+          final totalWidth = constraints.maxWidth;
+          return Stack(
+            children: [
+              Container(
+                height: 10,
+                width: totalWidth,
+                decoration: BoxDecoration(
+                    color: C.border, borderRadius: BorderRadius.circular(6)),
+              ),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 50),
+                height: 10,
+                width: (s._signal / 100 * totalWidth).clamp(0, totalWidth),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [C.cyan, sigColor]),
+                  borderRadius: BorderRadius.circular(6),
                 ),
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 50),
-                  height: 10,
-                  width: (s._signal / 100 * totalWidth).clamp(0, totalWidth),
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [C.cyan, sigColor],
-                    ),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                ),
-                // Alert threshold marker
-                Positioned(
-                  left: (s._alertT / 100 * totalWidth).clamp(0, totalWidth - 2),
-                  top: 0,
-                  bottom: 0,
-                  child: Container(width: 2, height: 10, color: C.orange),
-                ),
-                // Strong threshold marker
-                Positioned(
-                  left:
-                      (s._strongT / 100 * totalWidth).clamp(0, totalWidth - 2),
-                  top: 0,
-                  bottom: 0,
-                  child: Container(width: 2, height: 10, color: C.red),
-                ),
-              ],
-            );
-          },
-        ),
+              ),
+              Positioned(
+                left: (s._alertT / 100 * totalWidth).clamp(0, totalWidth - 2),
+                top: 0,
+                bottom: 0,
+                child: Container(width: 2, height: 10, color: C.orange),
+              ),
+              Positioned(
+                left: (s._strongT / 100 * totalWidth).clamp(0, totalWidth - 2),
+                top: 0,
+                bottom: 0,
+                child: Container(width: 2, height: 10, color: C.red),
+              ),
+            ],
+          );
+        }),
         const SizedBox(height: 8),
       ],
     );
@@ -1467,25 +1637,19 @@ class _RawVal extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: color.withOpacity(0.6),
-              fontSize: 9,
-              letterSpacing: 1,
-              fontFamily: C.mono,
-            ),
-          ),
+          Text(label,
+              style: TextStyle(
+                  color: color.withOpacity(0.6),
+                  fontSize: 9,
+                  letterSpacing: 1,
+                  fontFamily: C.mono)),
           const SizedBox(height: 3),
-          Text(
-            val.toStringAsFixed(1),
-            style: TextStyle(
-              color: color,
-              fontSize: 12,
-              fontFamily: C.mono,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          Text(val.toStringAsFixed(1),
+              style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontFamily: C.mono,
+                  fontWeight: FontWeight.w700)),
         ],
       );
 }
@@ -1511,20 +1675,19 @@ class _DetectionBanner extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            isStrong ? Icons.bolt_rounded : Icons.radio_button_checked_rounded,
-            color: sigColor,
-            size: 22,
-          ),
-          const SizedBox(width: 10),
-          Text(
-            isStrong ? 'DEMİR / ÇELİK TESPİT EDİLDİ' : 'DEMİR DIŞI METAL',
-            style: TextStyle(
+              isStrong
+                  ? Icons.bolt_rounded
+                  : Icons.radio_button_checked_rounded,
               color: sigColor,
-              fontSize: 14,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1.5,
-            ),
-          ),
+              size: 22),
+          const SizedBox(width: 10),
+          Text(isStrong ? 'FERROUS / STEEL DETECTED' : 'NON-FERROUS METAL',
+              style: TextStyle(
+                color: sigColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.5,
+              )),
         ],
       ),
     );
@@ -1541,28 +1704,28 @@ class _ShopPage extends StatelessWidget {
   static final List<CartItem> _plans = [
     CartItem(
       id: IAPIds.proMonthly,
-      title: 'Aylık Plan',
-      description: 'Aylık abonelik',
+      title: 'Monthly Plan',
+      description: 'Monthly subscription',
       price: 2.99,
-      duration: '1 ay',
+      duration: '1 month',
       originalPrice: '5.99',
       discount: 50,
     ),
     CartItem(
       id: IAPIds.proAnnual,
-      title: 'Yıllık Plan',
-      description: 'Yıllık abonelik — En değerli',
+      title: 'Annual Plan',
+      description: 'Annual subscription — Best value',
       price: 19.99,
-      duration: '12 ay',
+      duration: '12 months',
       originalPrice: '35.88',
       discount: 44,
     ),
     CartItem(
       id: IAPIds.proLifetime,
-      title: 'Ömür Boyu',
-      description: 'Tek seferlik ödeme',
+      title: 'Lifetime',
+      description: 'One-time payment',
       price: 49.99,
-      duration: 'Sınırsız',
+      duration: 'Unlimited',
       originalPrice: '99.99',
       discount: 50,
     ),
@@ -1573,7 +1736,11 @@ class _ShopPage extends StatelessWidget {
     final s = state;
     final cart = context.watch<ShoppingCart>();
 
-    if (s._isPro) return _ProActivePage(tier: s._tier);
+    if (s._tier == Tier.monthly ||
+        s._tier == Tier.annual ||
+        s._tier == Tier.lifetime) {
+      return _ProActivePage(tier: s._tier);
+    }
 
     return SafeArea(
       child: SingleChildScrollView(
@@ -1589,19 +1756,15 @@ class _ShopPage extends StatelessWidget {
                 const Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'PRO\'YA YÜKSELİN',
-                      style: TextStyle(
-                        color: C.cyan,
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                    Text(
-                      'Reklamları kaldırın, tüm özellikleri açın',
-                      style: TextStyle(color: C.tSec, fontSize: 11),
-                    ),
+                    Text('UPGRADE TO PRO',
+                        style: TextStyle(
+                          color: C.cyan,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                        )),
+                    Text('Remove ads, unlock all features',
+                        style: TextStyle(color: C.tSec, fontSize: 11)),
                   ],
                 ),
                 Stack(
@@ -1630,15 +1793,11 @@ class _ShopPage extends StatelessWidget {
                           decoration: const BoxDecoration(
                               color: C.red, shape: BoxShape.circle),
                           child: Center(
-                            child: Text(
-                              '${cart.itemCount}',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                          ),
+                              child: Text('${cart.itemCount}',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w900))),
                         ),
                       ),
                   ],
@@ -1647,14 +1806,16 @@ class _ShopPage extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // Feature list
-            const _SectionLabel('PRO ÖZELLİKLER'),
+            // ── Rewarded Ad Card (prominent)
+            _ShopRewardedCard(state: s),
+            const SizedBox(height: 20),
+
+            const _SectionLabel('PRO FEATURES'),
             const SizedBox(height: 8),
             _FeatureGrid(),
             const SizedBox(height: 24),
 
-            // Plans
-            const _SectionLabel('PLAN SEÇİN'),
+            const _SectionLabel('SELECT A PLAN'),
             const SizedBox(height: 8),
             ..._plans.map((item) {
               final inCart = cart.hasItem(item.id);
@@ -1665,15 +1826,152 @@ class _ShopPage extends StatelessWidget {
                 onRemove: () => cart.removeItem(item.id),
               );
             }),
-
             const SizedBox(height: 16),
             const Center(
               child: Text(
-                'Abonelikler Google Play üzerinden yönetilir.\nİstediğiniz zaman iptal edebilirsiniz.',
+                'Subscriptions managed via Google Play.\nCancel anytime.',
                 style: TextStyle(color: C.tDim, fontSize: 10),
                 textAlign: TextAlign.center,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Rewarded Ad card on Shop page
+class _ShopRewardedCard extends StatelessWidget {
+  final _ShellState state;
+  const _ShopRewardedCard({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+
+    // If rewarded trial is active, show countdown instead
+    if (s._tier == Tier.rewarded) {
+      final secs = s._rewardedSecsLeft;
+      final min = secs ~/ 60;
+      final sec = secs % 60;
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [
+            C.gold.withOpacity(0.12),
+            C.orange.withOpacity(0.08),
+          ]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: C.gold.withOpacity(0.55), width: 1.5),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.workspace_premium_rounded,
+                color: C.gold, size: 36),
+            const SizedBox(height: 8),
+            const Text('PRO Trial Active!',
+                style: TextStyle(
+                  color: C.gold,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                )),
+            const SizedBox(height: 4),
+            Text(
+              'Time remaining: ${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}',
+              style: const TextStyle(color: C.tSec, fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: (secs / 120.0).clamp(0.0, 1.0),
+                backgroundColor: C.border,
+                valueColor: const AlwaysStoppedAnimation<Color>(C.gold),
+                minHeight: 7,
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('Subscribe to keep PRO forever!',
+                style: TextStyle(color: C.tDim, fontSize: 11)),
+          ],
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: s._watchRewardedAd,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [
+            C.purple.withOpacity(0.18),
+            C.cyan.withOpacity(0.10),
+          ]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: C.purple.withOpacity(0.6), width: 1.5),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: C.purple.withOpacity(0.15),
+                    border: Border.all(color: C.purple.withOpacity(0.5)),
+                  ),
+                  child: const Icon(Icons.play_circle_filled_rounded,
+                      color: C.purple, size: 28),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: const [
+                      Text('🎁 Try PRO FREE for 2 Minutes!',
+                          style: TextStyle(
+                            color: C.tPrim,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          )),
+                      SizedBox(height: 3),
+                      Text(
+                          'Watch a short ad to unlock all PRO features instantly — no payment required.',
+                          style: TextStyle(color: C.tSec, fontSize: 11)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton.icon(
+                onPressed: s._watchRewardedAd,
+                icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                label: const Text('WATCH AD — GET 2 MIN PRO',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: C.purple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('Free • No commitment • Instant unlock',
+                style: TextStyle(color: C.tDim, fontSize: 10)),
           ],
         ),
       ),
@@ -1686,84 +1984,80 @@ class _ProActivePage extends StatelessWidget {
   const _ProActivePage({required this.tier});
 
   @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 100,
-                height: 100,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: C.cyan.withOpacity(0.1),
-                  border: Border.all(color: C.cyan.withOpacity(0.5), width: 2),
-                ),
-                child: const Icon(Icons.workspace_premium_rounded,
-                    color: C.cyan, size: 50),
-              ),
-              const SizedBox(height: 24),
-              const Text(
-                'PRO AKTİF',
-                style: TextStyle(
-                  color: C.cyan,
-                  fontSize: 24,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 3,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                tier == Tier.monthly
-                    ? 'Aylık Abonelik'
-                    : tier == Tier.annual
-                        ? 'Yıllık Abonelik'
-                        : 'Ömür Boyu Lisans',
-                style: const TextStyle(color: C.tSec, fontSize: 14),
-              ),
-              const SizedBox(height: 32),
-              ...[
-                'Gelişmiş Analitik Gösterge Paneli',
-                'Sınırsız CSV Veri Dışa Aktarma',
-                'Hassas Eşik Kontrolü',
-                'Reklamsız Deneyim',
-                'Manuel Kalibrasyon',
-                'Ses Hassasiyeti Ayarı',
-              ].map(
-                (f) => Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 5),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.check_circle_rounded,
-                          color: C.green, size: 18),
-                      const SizedBox(width: 10),
-                      Text(f,
-                          style: const TextStyle(color: C.tPrim, fontSize: 13)),
-                    ],
+  Widget build(BuildContext context) => SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: C.cyan.withOpacity(0.1),
+                    border:
+                        Border.all(color: C.cyan.withOpacity(0.5), width: 2),
                   ),
+                  child: const Icon(Icons.workspace_premium_rounded,
+                      color: C.cyan, size: 50),
                 ),
-              ),
-            ],
+                const SizedBox(height: 24),
+                const Text('PRO ACTIVE',
+                    style: TextStyle(
+                      color: C.cyan,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 3,
+                    )),
+                const SizedBox(height: 8),
+                Text(
+                  tier == Tier.monthly
+                      ? 'Monthly Subscription'
+                      : tier == Tier.annual
+                          ? 'Annual Subscription'
+                          : 'Lifetime License',
+                  style: const TextStyle(color: C.tSec, fontSize: 14),
+                ),
+                const SizedBox(height: 32),
+                ...[
+                  'Advanced Analytics Dashboard',
+                  'Unlimited CSV Data Export',
+                  'Precision Threshold Control',
+                  'Ad-Free Experience',
+                  'Manual Calibration',
+                  'Audio Sensitivity Adjustment',
+                ].map((f) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle_rounded,
+                              color: C.green, size: 18),
+                          const SizedBox(width: 10),
+                          Text(f,
+                              style: const TextStyle(
+                                  color: C.tPrim, fontSize: 13)),
+                        ],
+                      ),
+                    )),
+              ],
+            ),
           ),
         ),
-      ),
-    );
-  }
+      );
 }
 
 class _FeatureGrid extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const features = [
-      (Icons.analytics_rounded, 'Analitik', 'Detaylı istatistikler'),
-      (Icons.download_rounded, 'CSV Export', 'Veri dışa aktarma'),
-      (Icons.tune_rounded, 'Eşik Ayarı', 'Hassas kontrol'),
-      (Icons.block_rounded, 'Reklamsız', 'Kesintisiz deneyim'),
-      (Icons.build_rounded, 'Kalibrasyon', 'Manuel kontrol'),
-      (Icons.volume_up_rounded, 'Ses Ayarı', 'Hassasiyet kontrolü'),
+      (Icons.analytics_rounded, 'Analytics', 'Detailed stats'),
+      (Icons.download_rounded, 'CSV Export', 'Export data'),
+      (Icons.tune_rounded, 'Thresholds', 'Fine control'),
+      (Icons.block_rounded, 'Ad-Free', 'No interruptions'),
+      (Icons.build_rounded, 'Calibration', 'Manual control'),
+      (Icons.volume_up_rounded, 'Audio', 'Sensitivity control'),
     ];
 
     return GridView.count(
@@ -1787,20 +2081,15 @@ class _FeatureGrid extends StatelessWidget {
             children: [
               Icon(icon, color: C.cyan, size: 22),
               const SizedBox(height: 6),
-              Text(
-                title,
-                style: const TextStyle(
-                  color: C.tPrim,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                ),
-                textAlign: TextAlign.center,
-              ),
-              Text(
-                sub,
-                style: const TextStyle(color: C.tDim, fontSize: 8),
-                textAlign: TextAlign.center,
-              ),
+              Text(title,
+                  style: const TextStyle(
+                      color: C.tPrim,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center),
+              Text(sub,
+                  style: const TextStyle(color: C.tDim, fontSize: 8),
+                  textAlign: TextAlign.center),
             ],
           ),
         );
@@ -1822,8 +2111,8 @@ class _ProductCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isBest = item.duration == '12 ay';
-    final isLife = item.duration == 'Sınırsız';
+    final isBest = item.duration == '12 months';
+    final isLife = item.duration == 'Unlimited';
     final badgeColor = isLife ? C.purple : C.cyan;
 
     return Container(
@@ -1847,28 +2136,22 @@ class _ProductCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Title row
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          item.title,
-                          style: const TextStyle(
-                            color: C.tPrim,
-                            fontSize: 15,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          item.description,
-                          style: const TextStyle(color: C.tSec, fontSize: 11),
-                        ),
-                      ],
-                    ),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.title,
+                              style: const TextStyle(
+                                  color: C.tPrim,
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w800)),
+                          const SizedBox(height: 2),
+                          Text(item.description,
+                              style:
+                                  const TextStyle(color: C.tSec, fontSize: 11)),
+                        ]),
                     Container(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 10, vertical: 4),
@@ -1877,54 +2160,39 @@ class _ProductCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(8),
                         border: Border.all(color: C.green.withOpacity(0.35)),
                       ),
-                      child: Text(
-                        '-${item.discount}% İNDİRİM',
-                        style: const TextStyle(
-                          color: C.green,
-                          fontSize: 9,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
+                      child: Text('-${item.discount}% OFF',
+                          style: const TextStyle(
+                              color: C.green,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900)),
                     ),
                   ],
                 ),
-
                 const SizedBox(height: 14),
-
-                // Price
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.baseline,
                   textBaseline: TextBaseline.alphabetic,
                   children: [
-                    Text(
-                      '\$${item.originalPrice}',
-                      style: const TextStyle(
-                        color: C.tDim,
-                        fontSize: 12,
-                        decoration: TextDecoration.lineThrough,
-                      ),
-                    ),
+                    Text('\$${item.originalPrice}',
+                        style: const TextStyle(
+                            color: C.tDim,
+                            fontSize: 12,
+                            decoration: TextDecoration.lineThrough)),
                     const SizedBox(width: 10),
-                    Text(
-                      '\$${item.price.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: C.tPrim,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w900,
-                        fontFamily: C.mono,
-                      ),
-                    ),
+                    Text('\$${item.price.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                            color: C.tPrim,
+                            fontSize: 26,
+                            fontWeight: FontWeight.w900,
+                            fontFamily: C.mono)),
                   ],
                 ),
                 Text(
-                  isLife
-                      ? 'Tek Seferlik · ${item.duration}'
-                      : 'Her ${item.duration}',
-                  style: const TextStyle(color: C.tDim, fontSize: 10),
-                ),
+                    isLife
+                        ? 'One-Time · ${item.duration}'
+                        : 'Per ${item.duration}',
+                    style: const TextStyle(color: C.tDim, fontSize: 10)),
                 const SizedBox(height: 14),
-
-                // Button
                 SizedBox(
                   width: double.infinity,
                   height: 44,
@@ -1933,25 +2201,20 @@ class _ProductCard extends StatelessWidget {
                           onPressed: onRemove,
                           icon:
                               const Icon(Icons.check_circle_rounded, size: 16),
-                          label: const Text(
-                            'Sepette',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
+                          label: const Text('In Cart',
+                              style: TextStyle(fontWeight: FontWeight.w700)),
                           style: OutlinedButton.styleFrom(
                             foregroundColor: C.green,
                             side: const BorderSide(color: C.green),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                                borderRadius: BorderRadius.circular(12)),
                           ),
                         )
                       : ElevatedButton.icon(
                           onPressed: onAdd,
                           icon: const Icon(Icons.add_shopping_cart, size: 16),
-                          label: const Text(
-                            'Sepete Ekle',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
+                          label: const Text('Add to Cart',
+                              style: TextStyle(fontWeight: FontWeight.w700)),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: isBest
                                 ? C.cyan
@@ -1961,8 +2224,7 @@ class _ProductCard extends StatelessWidget {
                             foregroundColor:
                                 isBest || isLife ? Colors.black : C.tPrim,
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+                                borderRadius: BorderRadius.circular(12)),
                             elevation: 0,
                           ),
                         ),
@@ -1984,15 +2246,14 @@ class _ProductCard extends StatelessWidget {
                     bottomLeft: Radius.circular(12),
                   ),
                 ),
-                child: Text(
-                  isBest ? 'EN DEĞERLİ' : 'ÖMÜR BOYU',
-                  style: TextStyle(
-                    color: badgeColor == C.purple ? Colors.white : Colors.black,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1,
-                  ),
-                ),
+                child: Text(isBest ? 'BEST VALUE' : 'LIFETIME',
+                    style: TextStyle(
+                      color:
+                          badgeColor == C.purple ? Colors.white : Colors.black,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    )),
               ),
             ),
         ],
@@ -2012,36 +2273,29 @@ class _CartSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cart = context.watch<ShoppingCart>();
-
     return Padding(
       padding: EdgeInsets.fromLTRB(
           16, 8, 16, MediaQuery.of(context).viewInsets.bottom + 20),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Handle
           Container(
             width: 40,
             height: 4,
             margin: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
-              color: C.border,
-              borderRadius: BorderRadius.circular(4),
-            ),
+                color: C.border, borderRadius: BorderRadius.circular(4)),
           ),
-
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'SEPETİM',
-                style: TextStyle(
-                  color: C.cyan,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 2,
-                ),
-              ),
+              const Text('MY CART',
+                  style: TextStyle(
+                    color: C.cyan,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
+                  )),
               IconButton(
                 onPressed: () => Navigator.pop(context),
                 icon: const Icon(Icons.close, color: C.tSec, size: 20),
@@ -2049,7 +2303,6 @@ class _CartSheet extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 12),
-
           if (cart.items.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 40),
@@ -2058,23 +2311,18 @@ class _CartSheet extends StatelessWidget {
                   const Icon(Icons.shopping_cart_outlined,
                       color: C.tDim, size: 52),
                   const SizedBox(height: 12),
-                  const Text(
-                    'Sepet boş',
-                    style: TextStyle(
-                      color: C.tSec,
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
+                  const Text('Cart is empty',
+                      style: TextStyle(
+                          color: C.tSec,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  const Text(
-                    'Pro plan seçin',
-                    style: TextStyle(color: C.tDim, fontSize: 11),
-                  ),
+                  const Text('Select a Pro plan',
+                      style: TextStyle(color: C.tDim, fontSize: 11)),
                   const SizedBox(height: 20),
                   TextButton(
                     onPressed: () => Navigator.pop(context),
-                    child: const Text('Plan Seç →',
+                    child: const Text('Select Plan →',
                         style: TextStyle(color: C.cyan)),
                   ),
                 ],
@@ -2083,32 +2331,23 @@ class _CartSheet extends StatelessWidget {
           else ...[
             ...cart.items.map((item) => _CartTile(item: item)),
             const Divider(color: C.border, height: 24),
-
-            // Total
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text(
-                  'TOPLAM',
-                  style: TextStyle(
-                    color: C.cyan,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-                Text(
-                  '\$${cart.totalPrice.toStringAsFixed(2)}',
-                  style: const TextStyle(
-                    color: C.cyan,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    fontFamily: C.mono,
-                  ),
-                ),
+                const Text('TOTAL',
+                    style: TextStyle(
+                        color: C.cyan,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900)),
+                Text('\$${cart.totalPrice.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                        color: C.cyan,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        fontFamily: C.mono)),
               ],
             ),
             const SizedBox(height: 16),
-
             SizedBox(
               width: double.infinity,
               height: 52,
@@ -2118,27 +2357,23 @@ class _CartSheet extends StatelessWidget {
                   onCheckout();
                 },
                 icon: const Icon(Icons.payment_rounded, size: 20),
-                label: const Text(
-                  'ŞIMDI ABONE OL',
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: 1.5,
-                  ),
-                ),
+                label: const Text('SUBSCRIBE NOW',
+                    style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.5)),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: C.cyan,
                   foregroundColor: Colors.black,
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(14),
-                  ),
+                      borderRadius: BorderRadius.circular(14)),
                   elevation: 0,
                 ),
               ),
             ),
             const SizedBox(height: 8),
             const Text(
-              'Google Play üzerinden faturalandırılır · İstediğiniz zaman iptal',
+              'Billed via Google Play · Cancel anytime',
               style: TextStyle(color: C.tDim, fontSize: 10),
               textAlign: TextAlign.center,
             ),
@@ -2168,33 +2403,23 @@ class _CartTile extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.title,
+            child:
+                Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(item.title,
                   style: const TextStyle(
-                    color: C.tPrim,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  item.description,
-                  style: const TextStyle(color: C.tSec, fontSize: 10),
-                ),
-              ],
-            ),
+                      color: C.tPrim,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700)),
+              Text(item.description,
+                  style: const TextStyle(color: C.tSec, fontSize: 10)),
+            ]),
           ),
-          Text(
-            '\$${item.price.toStringAsFixed(2)}',
-            style: const TextStyle(
-              color: C.cyan,
-              fontSize: 14,
-              fontWeight: FontWeight.w900,
-              fontFamily: C.mono,
-            ),
-          ),
+          Text('\$${item.price.toStringAsFixed(2)}',
+              style: const TextStyle(
+                  color: C.cyan,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  fontFamily: C.mono)),
           const SizedBox(width: 8),
           GestureDetector(
             onTap: () => cart.removeItem(item.id),
@@ -2231,8 +2456,7 @@ class _AnalyticsPage extends StatelessWidget {
     final durStr =
         '${dur.inMinutes}:${(dur.inSeconds % 60).toString().padLeft(2, '0')}';
 
-    double avg = 0.0;
-    double peak = 0.0;
+    double avg = 0.0, peak = 0.0;
     if (s._readings.isNotEmpty) {
       avg = s._readings.map((r) => r.signal).reduce((a, b) => a + b) /
           s._readings.length;
@@ -2252,7 +2476,7 @@ class _AnalyticsPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const _SectionLabel('OTURUM ANALİTİKLERİ', large: true),
+            const _SectionLabel('SESSION ANALYTICS', large: true),
             const SizedBox(height: 16),
             GridView.count(
               crossAxisCount: 2,
@@ -2262,29 +2486,28 @@ class _AnalyticsPage extends StatelessWidget {
               mainAxisSpacing: 10,
               childAspectRatio: 1.75,
               children: [
-                _StatCard('Oturum Süresi', durStr, C.cyan, Icons.timer_rounded),
-                _StatCard('Tespitler', '${s._totalDet}', C.red,
+                _StatCard('Session Time', durStr, C.cyan, Icons.timer_rounded),
+                _StatCard('Detections', '${s._totalDet}', C.red,
                     Icons.warning_rounded),
-                _StatCard('Okuma Sayısı', '${s._readings.length}', C.green,
+                _StatCard('Readings', '${s._readings.length}', C.green,
                     Icons.data_usage_rounded),
-                _StatCard('Ort. Sinyal', avg.toStringAsFixed(1), C.orange,
+                _StatCard('Avg Signal', avg.toStringAsFixed(1), C.orange,
                     Icons.show_chart_rounded),
-                _StatCard('Peak Sinyal', peak.toStringAsFixed(1), C.purple,
+                _StatCard('Peak Signal', peak.toStringAsFixed(1), C.purple,
                     Icons.trending_up_rounded),
-                _StatCard('Örnek/sn', rate, C.tSec, Icons.speed_rounded),
+                _StatCard('Samples/sec', rate, C.tSec, Icons.speed_rounded),
               ],
             ),
             const SizedBox(height: 24),
             if (!s._isPro)
               _ProGate(
                 icon: Icons.download_rounded,
-                title: 'CSV Dışa Aktarma',
-                subtitle:
-                    'Tüm sensör verilerini CSV olarak dışa aktarın. PRO gerektirir.',
+                title: 'CSV Data Export',
+                subtitle: 'Export all sensor data as CSV. Requires PRO.',
                 onUpgrade: () => s.navigateTo(1),
               ),
             const SizedBox(height: 16),
-            const _SectionLabel('TESPİT GÜNLÜĞÜ (son 50)'),
+            const _SectionLabel('DETECTION LOG (last 50)'),
             const SizedBox(height: 10),
             if (s._detections.isEmpty)
               Center(
@@ -2294,10 +2517,8 @@ class _AnalyticsPage extends StatelessWidget {
                     children: [
                       const Icon(Icons.radar_rounded, color: C.tDim, size: 40),
                       const SizedBox(height: 10),
-                      Text(
-                        s._calDone ? 'Henüz tespit yok' : 'Kalibre ediliyor…',
-                        style: const TextStyle(color: C.tSec, fontSize: 13),
-                      ),
+                      Text(s._calDone ? 'No detections yet' : 'Calibrating…',
+                          style: const TextStyle(color: C.tSec, fontSize: 13)),
                     ],
                   ),
                 ),
@@ -2323,69 +2544,59 @@ class _ProGate extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: C.card,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: C.gold.withOpacity(0.4)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 44,
-            height: 44,
-            decoration: BoxDecoration(
-              color: C.gold.withOpacity(0.12),
-              shape: BoxShape.circle,
-              border: Border.all(color: C.gold.withOpacity(0.4)),
-            ),
-            child: Icon(icon, color: C.gold, size: 20),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: C.tPrim,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                Text(
-                  subtitle,
-                  style: const TextStyle(color: C.tSec, fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          GestureDetector(
-            onTap: onUpgrade,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: C.gold.withOpacity(0.4)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
               decoration: BoxDecoration(
                 color: C.gold.withOpacity(0.12),
-                borderRadius: BorderRadius.circular(10),
+                shape: BoxShape.circle,
                 border: Border.all(color: C.gold.withOpacity(0.4)),
               ),
-              child: const Text(
-                'PRO',
-                style: TextStyle(
-                  color: C.gold,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
+              child: Icon(icon, color: C.gold, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(
+                            color: C.tPrim,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                    Text(subtitle,
+                        style: const TextStyle(color: C.tSec, fontSize: 11)),
+                  ]),
+            ),
+            GestureDetector(
+              onTap: onUpgrade,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: C.gold.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: C.gold.withOpacity(0.4)),
                 ),
+                child: const Text('PRO',
+                    style: TextStyle(
+                        color: C.gold,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900)),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
+          ],
+        ),
+      );
 }
 
 class _StatCard extends StatelessWidget {
@@ -2406,28 +2617,20 @@ class _StatCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Row(
-              children: [
-                Icon(ic, color: col, size: 12),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    t,
-                    style: const TextStyle(
-                        fontSize: 9.5, color: C.tSec, letterSpacing: .3),
-                  ),
-                ),
-              ],
-            ),
-            Text(
-              v,
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w900,
-                color: col,
-                fontFamily: C.mono,
-              ),
-            ),
+            Row(children: [
+              Icon(ic, color: col, size: 12),
+              const SizedBox(width: 6),
+              Flexible(
+                  child: Text(t,
+                      style: const TextStyle(
+                          fontSize: 9.5, color: C.tSec, letterSpacing: .3))),
+            ]),
+            Text(v,
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: col,
+                    fontFamily: C.mono)),
           ],
         ),
       );
@@ -2452,49 +2655,33 @@ class _DetTile extends StatelessWidget {
               width: 38,
               height: 38,
               decoration: BoxDecoration(
-                color: d.color.withOpacity(0.12),
-                shape: BoxShape.circle,
-              ),
+                  color: d.color.withOpacity(0.12), shape: BoxShape.circle),
               child: Icon(d.icon, color: d.color, size: 17),
             ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    d.label,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w700,
-                      color: d.color,
-                    ),
-                  ),
-                  Text(
-                    DateFormat('HH:mm:ss.S').format(d.ts),
-                    style: const TextStyle(fontSize: 10, color: C.tSec),
-                  ),
-                ],
-              ),
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(d.label,
+                        style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: d.color)),
+                    Text(DateFormat('HH:mm:ss.S').format(d.ts),
+                        style: const TextStyle(fontSize: 10, color: C.tSec)),
+                  ]),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  d.signal.toStringAsFixed(1),
+            Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+              Text(d.signal.toStringAsFixed(1),
                   style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: C.tPrim,
-                    fontFamily: C.mono,
-                  ),
-                ),
-                Text(
-                  '${(d.conf * 100).toStringAsFixed(0)}% güven',
-                  style: const TextStyle(fontSize: 10, color: C.tSec),
-                ),
-              ],
-            ),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: C.tPrim,
+                      fontFamily: C.mono)),
+              Text('${(d.conf * 100).toStringAsFixed(0)}% conf',
+                  style: const TextStyle(fontSize: 10, color: C.tSec)),
+            ]),
           ],
         ),
       );
@@ -2517,7 +2704,7 @@ class _SettingsPage extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const _SectionLabel('AYARLAR', large: true),
+            const _SectionLabel('SETTINGS', large: true),
             const SizedBox(height: 16),
 
             // Tier info
@@ -2528,66 +2715,60 @@ class _SettingsPage extends StatelessWidget {
                 color: s._isPro ? C.cyan.withOpacity(0.08) : C.card,
                 borderRadius: BorderRadius.circular(14),
                 border: Border.all(
-                  color: s._isPro ? C.cyan.withOpacity(0.4) : C.border,
-                ),
+                    color: s._isPro ? C.cyan.withOpacity(0.4) : C.border),
               ),
               child: Row(
                 children: [
                   Icon(
-                    s._isPro
-                        ? Icons.workspace_premium_rounded
-                        : Icons.lock_open_rounded,
-                    color: s._isPro ? C.cyan : C.tSec,
-                    size: 22,
-                  ),
+                      s._isPro
+                          ? Icons.workspace_premium_rounded
+                          : Icons.lock_open_rounded,
+                      color: s._isPro ? C.cyan : C.tSec,
+                      size: 22),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          s._isPro
-                              ? 'PRO — ${s._tier.name.toUpperCase()}'
-                              : 'Ücretsiz Sürüm',
-                          style: TextStyle(
-                            color: s._isPro ? C.cyan : C.tSec,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        Text(
-                          s._isPro
-                              ? 'Tüm özellikler aktif'
-                              : 'Bazı özellikler kilitli',
-                          style: const TextStyle(color: C.tDim, fontSize: 10),
-                        ),
-                      ],
-                    ),
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                              s._isPro
+                                  ? (s._tier == Tier.rewarded
+                                      ? 'PRO TRIAL — ${s._rewardedSecsLeft}s left'
+                                      : 'PRO — ${s._tier.name.toUpperCase()}')
+                                  : 'Free Version',
+                              style: TextStyle(
+                                  color: s._isPro ? C.cyan : C.tSec,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700)),
+                          Text(
+                              s._isPro
+                                  ? 'All features active'
+                                  : 'Some features locked',
+                              style:
+                                  const TextStyle(color: C.tDim, fontSize: 10)),
+                        ]),
                   ),
                   if (!s._isPro)
                     TextButton(
-                      onPressed: () => s.navigateTo(1),
-                      child: const Text(
-                        'Yükselt →',
-                        style: TextStyle(color: C.cyan, fontSize: 12),
-                      ),
-                    ),
+                        onPressed: () => s.navigateTo(1),
+                        child: const Text('Upgrade →',
+                            style: TextStyle(color: C.cyan, fontSize: 12))),
                 ],
               ),
             ),
 
             // Detection (PRO-gated)
             _SettingsGroup(
-              title: 'TESPİT EŞİKLERİ',
+              title: 'DETECTION THRESHOLDS',
               children: [
                 if (!s._isPro)
                   _LockedFeature(
-                    label: 'Hassasiyet, Uyarı ve Güçlü Sinyal Eşikleri',
+                    label: 'Sensitivity, Alert & Strong Signal Thresholds',
                     onUpgrade: () => s.navigateTo(1),
                   )
                 else ...[
                   _SliderRow(
-                    label: 'Hassasiyet',
+                    label: 'Sensitivity',
                     value: s._sens,
                     min: 1.0,
                     max: 30.0,
@@ -2598,24 +2779,24 @@ class _SettingsPage extends StatelessWidget {
                     },
                   ),
                   _SliderRow(
-                    label: 'Uyarı Eşiği',
+                    label: 'Alert Threshold',
                     value: s._alertT,
                     min: 5.0,
                     max: 80.0,
                     unit: '',
-                    hint: 'Tespiti tetiklemek için minimum sinyal',
+                    hint: 'Minimum signal to trigger detection',
                     onChanged: (v) {
                       s.setState(() => s._alertT = v);
                       s._savePrefs();
                     },
                   ),
                   _SliderRow(
-                    label: 'Güçlü Sinyal Eşiği',
+                    label: 'Strong Signal Threshold',
                     value: s._strongT,
                     min: 30.0,
                     max: 150.0,
                     unit: '',
-                    hint: 'Bu değer üstü = demir/çelik',
+                    hint: 'Above this = ferrous / steel',
                     onChanged: (v) {
                       s.setState(() => s._strongT = v);
                       s._savePrefs();
@@ -2628,10 +2809,10 @@ class _SettingsPage extends StatelessWidget {
 
             // Audio
             _SettingsGroup(
-              title: 'SES AYARLARI',
+              title: 'AUDIO SETTINGS',
               children: [
                 _SwitchRow(
-                  label: 'Ses Uyarıları',
+                  label: 'Sound Alerts',
                   icon: Icons.volume_up_rounded,
                   value: s._sndOn,
                   onChanged: (v) {
@@ -2646,12 +2827,12 @@ class _SettingsPage extends StatelessWidget {
                 ),
                 if (!s._isPro)
                   _LockedFeature(
-                    label: 'Ses Hassasiyeti Ayarı',
+                    label: 'Audio Sensitivity Adjustment',
                     onUpgrade: () => s.navigateTo(1),
                   )
                 else
                   _SliderRow(
-                    label: 'Ses Seviyesi',
+                    label: 'Volume',
                     value: s._audioVol,
                     min: 0.05,
                     max: 1.0,
@@ -2659,9 +2840,8 @@ class _SettingsPage extends StatelessWidget {
                     color: C.orange,
                     onChanged: (v) {
                       s.setState(() => s._audioVol = v);
-                      if (s._sndOn && s._beeping) {
+                      if (s._sndOn && s._beeping)
                         s._audio.setVolume(v).catchError((_) {});
-                      }
                       s._savePrefs();
                     },
                   ),
@@ -2670,10 +2850,10 @@ class _SettingsPage extends StatelessWidget {
             const SizedBox(height: 16),
 
             _SettingsGroup(
-              title: 'GERİ BİLDİRİM',
+              title: 'FEEDBACK',
               children: [
                 _SwitchRow(
-                  label: 'Titreşim Uyarıları',
+                  label: 'Vibration Alerts',
                   icon: Icons.vibration_rounded,
                   value: s._vibOn,
                   onChanged: (v) {
@@ -2682,7 +2862,7 @@ class _SettingsPage extends StatelessWidget {
                   },
                 ),
                 _SwitchRow(
-                  label: 'Başlangıçta Otomatik Kalibrasyon',
+                  label: 'Auto-Calibrate on Start',
                   icon: Icons.autorenew_rounded,
                   value: s._autoC,
                   onChanged: (v) {
@@ -2695,16 +2875,17 @@ class _SettingsPage extends StatelessWidget {
             const SizedBox(height: 16),
 
             _SettingsGroup(
-              title: 'UYGULAMA',
+              title: 'APPLICATION',
               children: [
-                const _InfoRow('Versiyon', '5.0.0'),
+                const _InfoRow('Version', '5.0.0'),
                 _InfoRow(
-                  'Durum',
-                  s._tier == Tier.free
-                      ? 'Ücretsiz'
-                      : '⭐ ${s._tier.name.toUpperCase()}',
-                ),
-                _InfoRow('Toplam Örnek', '${s._totalSamples}'),
+                    'Status',
+                    s._tier == Tier.free
+                        ? 'Free'
+                        : s._tier == Tier.rewarded
+                            ? '⏱ PRO Trial'
+                            : '⭐ ${s._tier.name.toUpperCase()}'),
+                _InfoRow('Total Samples', '${s._totalSamples}'),
               ],
             ),
           ],
@@ -2720,42 +2901,35 @@ class _LockedFeature extends StatelessWidget {
   const _LockedFeature({required this.label, required this.onUpgrade});
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          const Icon(Icons.lock_rounded, color: C.gold, size: 16),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(color: C.tSec, fontSize: 12),
-            ),
-          ),
-          GestureDetector(
-            onTap: onUpgrade,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: C.gold.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: C.gold.withOpacity(0.4)),
-              ),
-              child: const Text(
-                'PRO',
-                style: TextStyle(
-                  color: C.gold,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.lock_rounded, color: C.gold, size: 16),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text(label,
+                    style: const TextStyle(color: C.tSec, fontSize: 12))),
+            GestureDetector(
+              onTap: onUpgrade,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: C.gold.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: C.gold.withOpacity(0.4)),
                 ),
+                child: const Text('PRO',
+                    style: TextStyle(
+                        color: C.gold,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900)),
               ),
             ),
-          ),
-        ],
-      ),
-    );
-  }
+          ],
+        ),
+      );
 }
 
 class _SettingsGroup extends StatelessWidget {
@@ -2767,15 +2941,12 @@ class _SettingsGroup extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              color: C.cyan,
-              fontSize: 9.5,
-              letterSpacing: 2.2,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
+          Text(title,
+              style: const TextStyle(
+                  color: C.cyan,
+                  fontSize: 9.5,
+                  letterSpacing: 2.2,
+                  fontWeight: FontWeight.w700)),
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(16),
@@ -2818,31 +2989,26 @@ class _SliderRow extends StatelessWidget {
               children: [
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label,
-                        style: const TextStyle(fontSize: 12, color: C.tPrim),
-                      ),
-                      if (hint != null)
-                        Text(
-                          hint!,
-                          style: const TextStyle(fontSize: 9.5, color: C.tDim),
-                        ),
-                    ],
-                  ),
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(label,
+                            style:
+                                const TextStyle(fontSize: 12, color: C.tPrim)),
+                        if (hint != null)
+                          Text(hint!,
+                              style: const TextStyle(
+                                  fontSize: 9.5, color: C.tDim)),
+                      ]),
                 ),
                 Text(
-                  unit.isEmpty
-                      ? value.toStringAsFixed(2)
-                      : '${value.toStringAsFixed(1)}$unit',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: color,
-                    fontFamily: C.mono,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                    unit.isEmpty
+                        ? value.toStringAsFixed(2)
+                        : '${value.toStringAsFixed(1)}$unit',
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: color,
+                        fontFamily: C.mono,
+                        fontWeight: FontWeight.w700)),
               ],
             ),
             SliderTheme(
@@ -2852,11 +3018,7 @@ class _SliderRow extends StatelessWidget {
                 overlayColor: color.withOpacity(0.2),
               ),
               child: Slider(
-                value: value,
-                min: min,
-                max: max,
-                onChanged: onChanged,
-              ),
+                  value: value, min: min, max: max, onChanged: onChanged),
             ),
           ],
         ),
@@ -2883,11 +3045,8 @@ class _SwitchRow extends StatelessWidget {
             Icon(icon, color: C.tSec, size: 18),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(fontSize: 13, color: C.tPrim),
-              ),
-            ),
+                child: Text(label,
+                    style: const TextStyle(fontSize: 13, color: C.tPrim))),
             Switch(value: value, onChanged: onChanged),
           ],
         ),
@@ -2905,15 +3064,12 @@ class _InfoRow extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(l, style: const TextStyle(fontSize: 12, color: C.tSec)),
-            Text(
-              v,
-              style: const TextStyle(
-                fontSize: 11,
-                color: C.tPrim,
-                fontFamily: C.mono,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+            Text(v,
+                style: const TextStyle(
+                    fontSize: 11,
+                    color: C.tPrim,
+                    fontFamily: C.mono,
+                    fontWeight: FontWeight.w600)),
           ],
         ),
       );
@@ -2942,49 +3098,46 @@ class _DebugPageState extends State<_DebugPage> {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
             child: Column(
               children: [
-                const _SectionLabel('DEBUG KONSOLU', large: true),
+                const _SectionLabel('DEBUG CONSOLE', large: true),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
-                      child: _DbgBtn(
-                        label: 'Temizle',
-                        icon: Icons.delete_rounded,
-                        color: C.red,
-                        onTap: () {
-                          Log.clear();
-                          setState(() {});
-                        },
-                      ),
-                    ),
+                        child: _DbgBtn(
+                      label: 'Clear',
+                      icon: Icons.delete_rounded,
+                      color: C.red,
+                      onTap: () {
+                        Log.clear();
+                        setState(() {});
+                      },
+                    )),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: _DbgBtn(
-                        label: 'Yenile',
-                        icon: Icons.refresh_rounded,
-                        color: C.cyan,
-                        onTap: () => setState(() {}),
-                      ),
-                    ),
+                        child: _DbgBtn(
+                      label: 'Refresh',
+                      icon: Icons.refresh_rounded,
+                      color: C.cyan,
+                      onTap: () => setState(() {}),
+                    )),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: _DbgBtn(
-                        label: 'Test Ses',
-                        icon: Icons.volume_up_rounded,
-                        color: C.orange,
-                        onTap: () async {
-                          try {
-                            await s._audio.setVolume(s._audioVol);
-                            await s._audio.play();
-                            await Future.delayed(
-                                const Duration(milliseconds: 500));
-                            await s._audio.stop();
-                          } catch (e) {
-                            Log.i('Test ses hatası: $e');
-                          }
-                        },
-                      ),
-                    ),
+                        child: _DbgBtn(
+                      label: 'Test Audio',
+                      icon: Icons.volume_up_rounded,
+                      color: C.orange,
+                      onTap: () async {
+                        try {
+                          await s._audio.setVolume(s._audioVol);
+                          await s._audio.play();
+                          await Future.delayed(
+                              const Duration(milliseconds: 500));
+                          await s._audio.stop();
+                        } catch (e) {
+                          Log.i('Audio test error: $e');
+                        }
+                      },
+                    )),
                   ],
                 ),
               ],
@@ -2994,11 +3147,7 @@ class _DebugPageState extends State<_DebugPage> {
           Expanded(
             child: logs.isEmpty
                 ? const Center(
-                    child: Text(
-                      'Henüz log yok',
-                      style: TextStyle(color: C.tDim),
-                    ),
-                  )
+                    child: Text('No logs yet', style: TextStyle(color: C.tDim)))
                 : ListView.builder(
                     reverse: true,
                     padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -3007,25 +3156,24 @@ class _DebugPageState extends State<_DebugPage> {
                       final log = logs[logs.length - 1 - i];
                       Color col = C.tSec;
                       if (log.contains('❌') ||
-                          log.contains('hatası') ||
+                          log.contains('error') ||
                           log.contains('failed')) col = C.red;
-                      if (log.contains('✅') || log.contains('Başarılı'))
+                      if (log.contains('✅') || log.contains('Success'))
                         col = C.green;
-                      if (log.contains('Satın') || log.contains('Purchase'))
+                      if (log.contains('Purchase') || log.contains('IAP'))
                         col = C.cyan;
-                      if (log.contains('PRO') || log.contains('aktif'))
+                      if (log.contains('PRO') || log.contains('active'))
                         col = C.purple;
-                      if (log.contains('Kalibre') || log.contains('Baz'))
+                      if (log.contains('Calibrat') || log.contains('Baseline'))
                         col = C.gold;
-                      return Text(
-                        log,
-                        style: TextStyle(
-                          fontSize: 9.5,
-                          color: col,
-                          fontFamily: C.mono,
-                          height: 1.6,
-                        ),
-                      );
+                      if (log.contains('Reward') || log.contains('reward'))
+                        col = C.orange;
+                      return Text(log,
+                          style: TextStyle(
+                              fontSize: 9.5,
+                              color: col,
+                              fontFamily: C.mono,
+                              height: 1.6));
                     },
                   ),
           ),
@@ -3062,14 +3210,9 @@ class _DbgBtn extends StatelessWidget {
             children: [
               Icon(icon, color: color, size: 14),
               const SizedBox(width: 5),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              Text(label,
+                  style: TextStyle(
+                      color: color, fontSize: 11, fontWeight: FontWeight.w700)),
             ],
           ),
         ),
@@ -3101,21 +3244,17 @@ class _Splash extends StatelessWidget {
                 child: const Icon(Icons.radar_rounded, color: C.cyan, size: 55),
               ),
               const SizedBox(height: 24),
-              const Text(
-                'SPECTRA PRO',
-                style: TextStyle(
-                  color: C.cyan,
-                  fontSize: 28,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 4,
-                  fontFamily: C.mono,
-                ),
-              ),
+              const Text('SPECTRA PRO',
+                  style: TextStyle(
+                    color: C.cyan,
+                    fontSize: 28,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 4,
+                    fontFamily: C.mono,
+                  )),
               const SizedBox(height: 8),
-              const Text(
-                'Profesyonel Metal Dedektörü',
-                style: TextStyle(color: C.tSec, fontSize: 14),
-              ),
+              const Text('Professional Metal Detector',
+                  style: TextStyle(color: C.tSec, fontSize: 14)),
               const SizedBox(height: 32),
               const SizedBox(
                 width: 120,
@@ -3125,10 +3264,8 @@ class _Splash extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 8),
-              const Text(
-                'v5.0.0',
-                style: TextStyle(color: C.tDim, fontSize: 10),
-              ),
+              const Text('v5.0.0',
+                  style: TextStyle(color: C.tDim, fontSize: 10)),
             ],
           ),
         ),
@@ -3151,10 +3288,10 @@ class _NavBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const items = [
-      (Icons.radar_rounded, 'Tarama'),
+      (Icons.radar_rounded, 'Scan'),
       (Icons.workspace_premium_rounded, 'Pro'),
-      (Icons.analytics_rounded, 'Analitik'),
-      (Icons.settings_rounded, 'Ayarlar'),
+      (Icons.analytics_rounded, 'Analytics'),
+      (Icons.settings_rounded, 'Settings'),
       (Icons.bug_report_rounded, 'Debug'),
     ];
 
@@ -3184,21 +3321,15 @@ class _NavBar extends StatelessWidget {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(
-                              icon,
-                              color: sel ? C.cyan : C.tDim,
-                              size: 22,
-                            ),
+                            Icon(icon, color: sel ? C.cyan : C.tDim, size: 22),
                             const SizedBox(height: 3),
-                            Text(
-                              label,
-                              style: TextStyle(
-                                fontSize: 9.5,
-                                color: sel ? C.cyan : C.tDim,
-                                fontWeight:
-                                    sel ? FontWeight.w700 : FontWeight.w400,
-                              ),
-                            ),
+                            Text(label,
+                                style: TextStyle(
+                                  fontSize: 9.5,
+                                  color: sel ? C.cyan : C.tDim,
+                                  fontWeight:
+                                      sel ? FontWeight.w700 : FontWeight.w400,
+                                )),
                           ],
                         ),
                       ),
@@ -3212,19 +3343,13 @@ class _NavBar extends StatelessWidget {
                         width: 18,
                         height: 18,
                         decoration: const BoxDecoration(
-                          color: C.red,
-                          shape: BoxShape.circle,
-                        ),
+                            color: C.red, shape: BoxShape.circle),
                         child: Center(
-                          child: Text(
-                            '$cartCount',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 9,
-                              fontWeight: FontWeight.w900,
-                            ),
-                          ),
-                        ),
+                            child: Text('$cartCount',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w900))),
                       ),
                     ),
                 ],
@@ -3243,13 +3368,11 @@ class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.t, {this.large = false});
 
   @override
-  Widget build(BuildContext context) => Text(
-        t,
-        style: TextStyle(
-          color: large ? C.tPrim : C.tSec,
-          fontSize: large ? 11 : 9.5,
-          letterSpacing: large ? 2.5 : 2.2,
-          fontWeight: FontWeight.w700,
-        ),
-      );
+  Widget build(BuildContext context) => Text(t,
+      style: TextStyle(
+        color: large ? C.tPrim : C.tSec,
+        fontSize: large ? 11 : 9.5,
+        letterSpacing: large ? 2.5 : 2.2,
+        fontWeight: FontWeight.w700,
+      ));
 }
