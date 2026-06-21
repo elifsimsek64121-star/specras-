@@ -1,0 +1,3568 @@
+import 'dart:async';
+import 'dart:math';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mobile_ads/google_mobile_ads.dart';
+import 'package:in_app_purchase/in_app_purchase.dart';
+import 'package:intl/intl.dart';
+import 'package:just_audio/just_audio.dart';
+import 'package:provider/provider.dart';
+import 'package:sensors_plus/sensors_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:vibration/vibration.dart';
+
+// ════════════════════════════════════════════════════════════════
+// MAIN
+// ════════════════════════════════════════════════════════════════
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await MobileAds.instance.initialize();
+  await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  runApp(const SpectraApp());
+}
+
+// ════════════════════════════════════════════════════════════════
+// Ad IDs
+// ════════════════════════════════════════════════════════════════
+class AdIds {
+  static const String bannerId = 'ca-app-pub-6551908952762916/1522350327';
+  static const String interstitialId = 'ca-app-pub-6551908952762916/1821733220';
+  static const String rewardedId = 'ca-app-pub-6551908952762916/8522872942';
+}
+
+// ════════════════════════════════════════════════════════════════
+// IAP Product IDs
+// ════════════════════════════════════════════════════════════════
+class IAPIds {
+  static const String proMonthly = 'spectra.pro.monthly';
+  static const String proAnnual = 'spectra.pro.annual';
+  static const String proLifetime = 'spectra.pro.lifetime';
+  static const Set<String> all = {proMonthly, proAnnual, proLifetime};
+}
+
+// ════════════════════════════════════════════════════════════════
+// DESIGN TOKENS
+// ════════════════════════════════════════════════════════════════
+class C {
+  static const bg = Color(0xFF070B18);
+  static const surface = Color(0xFF0C1220);
+  static const card = Color(0xFF111827);
+  static const cardAlt = Color(0xFF161F30);
+  static const border = Color(0xFF1E2D45);
+  static const borderBright = Color(0xFF2A3F5F);
+  static const cyan = Color(0xFF00D4FF);
+  static const cyanDark = Color(0xFF009EBF);
+  static const gold = Color(0xFFFFCC00);
+  static const green = Color(0xFF00E676);
+  static const orange = Color(0xFFFF7043);
+  static const red = Color(0xFFFF1744);
+  static const purple = Color(0xFFCE93D8);
+  static const tPrim = Color(0xFFE8EDF5);
+  static const tSec = Color(0xFF7B8BAA);
+  static const tDim = Color(0xFF2E3D55);
+  static const mono = 'RobotoMono';
+
+  static Color signalColor(double signal, double alertT, double strongT) {
+    if (signal > strongT) return red;
+    if (signal > alertT) return orange;
+    if (signal > alertT * 0.5) return gold;
+    return cyan;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// LOGGER
+// ════════════════════════════════════════════════════════════════
+class Log {
+  static final _buf = <String>[];
+  static void i(String m) {
+    final s = '[${DateFormat('HH:mm:ss.SSS').format(DateTime.now())}] $m';
+    _buf.add(s);
+    debugPrint(s);
+    if (_buf.length > 2000) _buf.removeAt(0);
+  }
+
+  static List<String> get all => List.from(_buf);
+  static void clear() => _buf.clear();
+}
+
+// ════════════════════════════════════════════════════════════════
+// MULTILANGUAGE (i18n)
+// ════════════════════════════════════════════════════════════════
+class Lang {
+  // Default language is English. Changes notify listeners.
+  static final ValueNotifier<String> code = ValueNotifier<String>('en');
+
+  static const Map<String, Map<String, String>> _s = {
+    'appTitle': {'tr': 'SPECTRA', 'en': 'SPECTRA'},
+    'pro': {'tr': 'PRO', 'en': 'PRO'},
+    'freeVersion': {'tr': 'Ücretsiz Sürüm', 'en': 'Free Version'},
+    'proFullAccess': {'tr': '⭐ PRO — Tam Erişim', 'en': '⭐ PRO — Full Access'},
+    'proTrial': {'tr': '⏱ PRO Deneme Sürümü', 'en': '⏱ PRO Trial'},
+    'navScan': {'tr': 'Tara', 'en': 'Scan'},
+    'navShop': {'tr': 'Mağaza', 'en': 'Shop'},
+    'navAnalytics': {'tr': 'Analiz', 'en': 'Analytics'},
+    'navSettings': {'tr': 'Ayarlar', 'en': 'Settings'},
+    'recalibrate': {'tr': 'Yeniden Kalibre Et', 'en': 'Recalibrate'},
+    'calibrating': {'tr': 'Cihazı sabit tutun…', 'en': 'Hold device still…'},
+    'calibrated': {
+      'tr': 'Kalibrasyon yapıldı — Aktif tarama',
+      'en': 'Calibrated — Active scanning'
+    },
+    'waitingSensor': {'tr': 'Sensör bekleniyor…', 'en': 'Waiting for sensor…'},
+    'signal': {'tr': 'SİNYAL', 'en': 'SIGNAL'},
+    'scanning': {'tr': 'TARAMA', 'en': 'SCANNING'},
+    'calibration': {'tr': 'KALİBRASYON', 'en': 'CALIBRATION'},
+    'ferrous': {'tr': 'DEMİR', 'en': 'FERROUS'},
+    'metal': {'tr': 'METAL', 'en': 'METAL'},
+    'ferrousDetected': {
+      'tr': 'DEMİR / ÇELİK TESPİT EDİLDİ',
+      'en': 'FERROUS / STEEL DETECTED'
+    },
+    'nonFerrousDetected': {'tr': 'DEMİR DIŞI METAL', 'en': 'NON-FERROUS METAL'},
+    'watchAdTitle': {
+      'tr': '🎁 Reklamı İzle → 2 Dakikalık PRO\'yu Ücretsiz Al',
+      'en': '🎁 Watch Ad → Get 2 Min PRO Free'
+    },
+    'watchAdSub': {
+      'tr': 'Tüm PRO özelliklerinin kilidini anında 2 dakika boyunca açın',
+      'en': 'Unlock all PRO features instantly for 2 minutes'
+    },
+    'watchBtn': {'tr': 'İZLE', 'en': 'WATCH'},
+    'upgradeToPro': {'tr': 'PRO\'YA YÜKSELTİN', 'en': 'UPGRADE TO PRO'},
+    'upgradeSub': {
+      'tr': 'Reklamları kaldırın, tüm özelliklerin kilidini açın',
+      'en': 'Remove ads, unlock all features'
+    },
+    'proFeatures': {'tr': 'PRO ÖZELLİKLER', 'en': 'PRO FEATURES'},
+    'choosePlan': {'tr': 'BİR PLAN SEÇİN', 'en': 'CHOOSE A PLAN'},
+    'managedByPlay': {
+      'tr':
+          'Abonelikler Google Play üzerinden yönetilir.\nİstediğiniz zaman iptal edebilirsiniz.',
+      'en':
+          'Subscriptions are managed via Google Play.\nYou can cancel anytime.'
+    },
+    'trialActive': {
+      'tr': 'PRO Deneme Sürümü Aktif!',
+      'en': 'PRO Trial Active!'
+    },
+    'timeLeft': {'tr': 'Kalan süre', 'en': 'Time left'},
+    'subscribeForever': {
+      'tr': 'PRO üyeliğini sonsuza dek korumak için abone olun!',
+      'en': 'Subscribe to keep PRO forever!'
+    },
+    'tryProFree': {
+      'tr': '🎁 PRO\'yu 2 Dakika Ücretsiz Deneyin!',
+      'en': '🎁 Try PRO Free for 2 Minutes!'
+    },
+    'tryProSub': {
+      'tr':
+          'Tüm PRO özelliklerinin kilidini anında açmak için kısa bir reklam izleyin — ödeme gerekmez.',
+      'en':
+          'Watch a short ad to instantly unlock all PRO features — no payment needed.'
+    },
+    'watchAdEarn': {
+      'tr': 'REKLAM İZLE — 2 DAKİKA PRO KAZANIN',
+      'en': 'WATCH AD — EARN 2 MIN PRO'
+    },
+    'freeNoCommit': {
+      'tr': 'Ücretsiz • Taahhüt yok • Anında kilidi açın',
+      'en': 'Free • No commitment • Instant unlock'
+    },
+    'proActive': {'tr': 'PRO AKTİF', 'en': 'PRO ACTIVE'},
+    'monthlySub': {'tr': 'Aylık Abonelik', 'en': 'Monthly Subscription'},
+    'annualSub': {'tr': 'Yıllık Abonelik', 'en': 'Annual Subscription'},
+    'lifetimeLic': {'tr': 'Ömür Boyu Lisans', 'en': 'Lifetime License'},
+    'featAnalytics': {
+      'tr': 'Gelişmiş Analitik Kontrol Paneli',
+      'en': 'Advanced Analytics Dashboard'
+    },
+    'featCsv': {
+      'tr': 'Sınırsız CSV Veri Dışa Aktarımı',
+      'en': 'Unlimited CSV Data Export'
+    },
+    'featThresh': {
+      'tr': 'Hassasiyet Eşik Kontrolü',
+      'en': 'Sensitivity Threshold Control'
+    },
+    'featAdFree': {'tr': 'Reklamsız Deneyim', 'en': 'Ad-Free Experience'},
+    'featManualCal': {'tr': 'Manuel Kalibrasyon', 'en': 'Manual Calibration'},
+    'featAudioSens': {
+      'tr': 'Ses Hassasiyeti Ayarı',
+      'en': 'Audio Sensitivity Setting'
+    },
+    'cart': {'tr': 'SEPETİM', 'en': 'MY CART'},
+    'cartEmpty': {'tr': 'Sepet boş', 'en': 'Cart is empty'},
+    'choosePlanArrow': {
+      'tr': 'Bir profesyonel plan seçin',
+      'en': 'Pick a pro plan'
+    },
+    'pickPlanCta': {'tr': 'Plan Seçin →', 'en': 'Pick a Plan →'},
+    'total': {'tr': 'TOPLAM', 'en': 'TOTAL'},
+    'subscribeNow': {'tr': 'ŞİMDİ ABONE OL', 'en': 'SUBSCRIBE NOW'},
+    'billedByPlay': {
+      'tr':
+          'Google Play üzerinden faturalandırıldı · İstediğiniz zaman iptal edin',
+      'en': 'Billed via Google Play · Cancel anytime'
+    },
+    'sessionAnalysis': {'tr': 'OTURUM ANALİZİ', 'en': 'SESSION ANALYSIS'},
+    'sessionDuration': {'tr': 'Oturum Süresi', 'en': 'Session Duration'},
+    'detections': {'tr': 'Algılamalar', 'en': 'Detections'},
+    'readings': {'tr': 'Okumalar', 'en': 'Readings'},
+    'avgSignal': {'tr': 'Ortalama Sinyal', 'en': 'Avg Signal'},
+    'peakSignal': {'tr': 'Tepe Sinyal', 'en': 'Peak Signal'},
+    'samplesPerSec': {'tr': 'Örnek/sn', 'en': 'Samples/s'},
+    'csvExportTitle': {'tr': 'CSV Veri Dışa Aktarma', 'en': 'CSV Data Export'},
+    'csvExportSub': {
+      'tr': 'Tüm sensör verilerini CSV olarak dışa aktarın. PRO gerektirir.',
+      'en': 'Export all sensor data as CSV. Requires PRO.'
+    },
+    'detectionLog': {
+      'tr': 'ALGILAMA GÜNLÜĞÜ (son 50)',
+      'en': 'DETECTION LOG (last 50)'
+    },
+    'noDetectionsYet': {'tr': 'Henüz tespit yok', 'en': 'No detections yet'},
+    'calibratingDots': {'tr': 'Kalibrasyon yapılıyor…', 'en': 'Calibrating…'},
+    'confidence': {'tr': 'güven', 'en': 'confidence'},
+    'settings': {'tr': 'AYARLAR', 'en': 'SETTINGS'},
+    'allFeaturesActive': {
+      'tr': 'Tüm özellikler aktif',
+      'en': 'All features active'
+    },
+    'someFeaturesLocked': {
+      'tr': 'Bazı özellikler kilitli',
+      'en': 'Some features locked'
+    },
+    'upgradeArrow': {'tr': 'Yükselt →', 'en': 'Upgrade →'},
+    'detectionThresholds': {
+      'tr': 'ALGILAMA EŞİKLERİ',
+      'en': 'DETECTION THRESHOLDS'
+    },
+    'lockedThresholds': {
+      'tr': 'Hassasiyet, Uyarı ve Güçlü Sinyal Eşikleri',
+      'en': 'Sensitivity, Alert & Strong Signal Thresholds'
+    },
+    'sensitivity': {'tr': 'Hassasiyet', 'en': 'Sensitivity'},
+    'alertThreshold': {'tr': 'Uyarı Eşiği', 'en': 'Alert Threshold'},
+    'alertHint': {
+      'tr': 'Algılamayı tetiklemek için minimum sinyal',
+      'en': 'Minimum signal to trigger detection'
+    },
+    'strongThreshold': {
+      'tr': 'Güçlü Sinyal Eşiği',
+      'en': 'Strong Signal Threshold'
+    },
+    'strongHint': {
+      'tr': 'Bunun üstü = demir / çelik',
+      'en': 'Above this = ferrous / steel'
+    },
+    'audioSettings': {'tr': 'SES AYARLARI', 'en': 'AUDIO SETTINGS'},
+    'audioAlerts': {'tr': 'Sesli Uyarılar', 'en': 'Audio Alerts'},
+    'lockedAudioSens': {
+      'tr': 'Ses Hassasiyeti Ayarı',
+      'en': 'Audio Sensitivity Setting'
+    },
+    'volume': {'tr': 'Ses Seviyesi', 'en': 'Volume'},
+    'feedback': {'tr': 'GERİ BİLDİRİM', 'en': 'FEEDBACK'},
+    'vibrationAlerts': {'tr': 'Titreşim Uyarıları', 'en': 'Vibration Alerts'},
+    'autoCalibrate': {
+      'tr': 'Başlangıçta Otomatik Kalibrasyon',
+      'en': 'Auto-Calibrate on Start'
+    },
+    'app': {'tr': 'UYGULAMA', 'en': 'APP'},
+    'version': {'tr': 'Sürüm', 'en': 'Version'},
+    'status': {'tr': 'Durum', 'en': 'Status'},
+    'free': {'tr': 'Ücretsiz', 'en': 'Free'},
+    'totalSamples': {'tr': 'Toplam Örnek Sayısı', 'en': 'Total Sample Count'},
+    'language': {'tr': 'DİL', 'en': 'LANGUAGE'},
+    'languageSub': {'tr': 'Uygulama dilini seçin', 'en': 'Choose app language'},
+    'monthlyPlan': {'tr': 'Aylık Plan', 'en': 'Monthly Plan'},
+    'monthlyDesc': {'tr': 'Aylık abonelik', 'en': 'Monthly subscription'},
+    'annualPlan': {'tr': 'Yıllık Plan', 'en': 'Annual Plan'},
+    'annualDesc': {
+      'tr': 'Yıllık abonelik — En iyi değer',
+      'en': 'Annual subscription — Best value'
+    },
+    'lifetimePlan': {'tr': 'Ömür Boyu', 'en': 'Lifetime'},
+    'lifetimeDesc': {'tr': 'Tek seferlik ödeme', 'en': 'One-time payment'},
+    'oneMonth': {'tr': '1 ay', 'en': '1 month'},
+    'twelveMonths': {'tr': '12 ay', 'en': '12 months'},
+    'unlimited': {'tr': 'Sınırsız', 'en': 'Unlimited'},
+    'bestValue': {'tr': 'EN İYİ DEĞER', 'en': 'BEST VALUE'},
+    'lifetimeBadge': {'tr': 'ÖMÜR BOYU', 'en': 'LIFETIME'},
+    'discountOff': {'tr': 'İNDİRİM', 'en': 'OFF'},
+    'addToCart': {'tr': 'Sepete Ekle', 'en': 'Add to Cart'},
+    'inCart': {'tr': 'Sepette', 'en': 'In Cart'},
+    'oneTime': {'tr': 'Tek Seferlik', 'en': 'One-time'},
+    'per': {'tr': 'Her', 'en': 'Per'},
+    'processing': {'tr': 'İşleniyor…', 'en': 'Processing…'},
+    'turkish': {'tr': 'Türkçe', 'en': 'Turkish'},
+    'english': {'tr': 'İngilizce', 'en': 'English'},
+    // Nav labels (used in bottom nav)
+    'scan': {'tr': 'Tara', 'en': 'Scan'},
+    'shop': {'tr': 'Mağaza', 'en': 'Shop'},
+    'analytics': {'tr': 'Analiz', 'en': 'Analytics'},
+    // Snack messages
+    'snackProUnlocked': {
+      'tr':
+          '🎉 2 Dakikalık PRO kilidi açıldı! Tüm özelliklerin tadını çıkarın.',
+      'en': '🎉 2-Minute PRO unlocked! Enjoy all features.'
+    },
+    'snackTrialExpired': {
+      'tr':
+          'PRO deneme süresi sona erdi. Başka bir reklam izleyin veya abone olun!',
+      'en': 'PRO trial expired. Watch another ad or subscribe!'
+    },
+    'snackAdLoading': {
+      'tr': 'Reklam yükleniyor… lütfen bir dakika sonra tekrar deneyin.',
+      'en': 'Ad loading… please try again in a moment.'
+    },
+    'snackIapUnavailable': {
+      'tr': 'Satın alma sistemi kullanılamıyor',
+      'en': 'Purchase system unavailable'
+    },
+    'snackPurchaseFailed': {
+      'tr': 'Satın alma başarısız. Lütfen tekrar deneyin.',
+      'en': 'Purchase failed. Please try again.'
+    },
+    'snackProActive': {
+      'tr': '🎉 PRO AKTİF! Tüm özellikler kilidi açıldı.',
+      'en': '🎉 PRO ACTIVE! All features unlocked.'
+    },
+    'snackCartEmpty': {'tr': 'Sepet boş', 'en': 'Cart is empty'},
+    'snackProductNotFound': {
+      'tr': 'Ürün bulunamadı — internet bağlantınızı kontrol edin',
+      'en': 'Product not found — check your internet connection'
+    },
+    'snackPurchaseStartFailed': {
+      'tr': 'Satın alma başlatılamadı',
+      'en': 'Could not start purchase'
+    },
+    // Feature list items
+    'featAnalyticsFull': {
+      'tr': 'Gelişmiş Analitik Kontrol Paneli',
+      'en': 'Advanced Analytics Dashboard'
+    },
+    'featCsvFull': {
+      'tr': 'Sınırsız CSV Veri Dışa Aktarımı',
+      'en': 'Unlimited CSV Data Export'
+    },
+    'featThreshFull': {
+      'tr': 'Hassasiyet Eşik Kontrolü',
+      'en': 'Sensitivity Threshold Control'
+    },
+    'featAdFreeFull': {'tr': 'Reklamsız Deneyim', 'en': 'Ad-Free Experience'},
+    'featManualCalFull': {
+      'tr': 'Manuel Kalibrasyon',
+      'en': 'Manual Calibration'
+    },
+    'featAudioSensFull': {
+      'tr': 'Ses Hassasiyeti Ayarı',
+      'en': 'Audio Sensitivity Setting'
+    },
+    // Feature grid
+    'featGridAnalytics': {'tr': 'Analizler', 'en': 'Analytics'},
+    'featGridAnalyticsSub': {
+      'tr': 'Detaylı istatistikler',
+      'en': 'Detailed stats'
+    },
+    'featGridCsv': {'tr': 'CSV Dışa Aktarma', 'en': 'CSV Export'},
+    'featGridCsvSub': {'tr': 'Verileri dışa aktar', 'en': 'Export data'},
+    'featGridThresh': {'tr': 'Eşikler', 'en': 'Thresholds'},
+    'featGridThreshSub': {'tr': 'Hassas kontrol', 'en': 'Precise control'},
+    'featGridAdFree': {'tr': 'Reklamsız', 'en': 'Ad-Free'},
+    'featGridAdFreeSub': {'tr': 'Kesinti yok', 'en': 'No interruptions'},
+    'featGridCal': {'tr': 'Kalibrasyon', 'en': 'Calibration'},
+    'featGridCalSub': {'tr': 'Manuel kontrol', 'en': 'Manual control'},
+    'featGridAudio': {'tr': 'Ses', 'en': 'Audio'},
+    'featGridAudioSub': {
+      'tr': 'Hassasiyet kontrolü',
+      'en': 'Sensitivity control'
+    },
+    // Plan durations / labels
+    'durationOneMonth': {'tr': '1 ay', 'en': '1 month'},
+    'durationTwelveMonths': {'tr': '12 ay', 'en': '12 months'},
+    'durationUnlimited': {'tr': 'Sınırsız', 'en': 'Unlimited'},
+    'oneTimePay': {'tr': 'Tek Seferlik', 'en': 'One-time'},
+    'perDuration': {'tr': 'Her', 'en': 'Per'},
+    // Detection labels
+    'ferrousSteel': {'tr': 'DEMİR / ÇELİK', 'en': 'FERROUS / STEEL'},
+    'nonFerrous': {'tr': 'DEMİR DIŞI METAL', 'en': 'NON-FERROUS METAL'},
+    // Calibration msg
+    'holdStill': {'tr': 'Cihazı sabit tutun…', 'en': 'Hold device still…'},
+    // Settings
+    'proTierLabel': {'tr': 'PRO DENEME', 'en': 'PRO TRIAL'},
+    'secLeft': {'tr': 's kaldı', 'en': 's left'},
+    // App section
+    'appVersion': {'tr': 'Sürüm', 'en': 'Version'},
+    'appStatus': {'tr': 'Durum', 'en': 'Status'},
+    'appFree': {'tr': 'Ücretsiz', 'en': 'Free'},
+    'appTotalSamples': {
+      'tr': 'Toplam Örnek Sayısı',
+      'en': 'Total Sample Count'
+    },
+    'proTrialShort': {'tr': '⏱ PRO Deneme', 'en': '⏱ PRO Trial'},
+  };
+
+  /// Returns translation. Falls back to key if not found.
+  static String t(String key) {
+    final entry = _s[key];
+    if (entry == null) return key;
+    return entry[code.value] ?? entry['en'] ?? key;
+  }
+
+  static void toggle() {
+    code.value = code.value == 'tr' ? 'en' : 'tr';
+  }
+
+  static void set(String c) {
+    if (c == 'tr' || c == 'en') code.value = c;
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// DATA MODELS
+// ════════════════════════════════════════════════════════════════
+class MagReading {
+  final DateTime ts;
+  final double x, y, z, raw, signal;
+  MagReading({
+    required this.ts,
+    required this.x,
+    required this.y,
+    required this.z,
+    required this.raw,
+    required this.signal,
+  });
+}
+
+class DetectionEvent {
+  final DateTime ts;
+  final String type, label;
+  final double conf, signal;
+  final Color color;
+  final IconData icon;
+  DetectionEvent({
+    required this.ts,
+    required this.type,
+    required this.conf,
+    required this.signal,
+    required this.label,
+    required this.color,
+    required this.icon,
+  });
+}
+
+enum Tier { free, monthly, annual, lifetime, rewarded }
+
+// ════════════════════════════════════════════════════════════════
+// SHOPPING CART
+// ════════════════════════════════════════════════════════════════
+class CartItem {
+  final String id, title, description, duration, originalPrice;
+  final double price;
+  final int discount;
+
+  CartItem({
+    required this.id,
+    required this.title,
+    required this.description,
+    required this.price,
+    required this.duration,
+    required this.originalPrice,
+    required this.discount,
+  });
+}
+
+class ShoppingCart extends ChangeNotifier {
+  final List<CartItem> _items = [];
+  List<CartItem> get items => List.from(_items);
+  int get itemCount => _items.length;
+  double get totalPrice => _items.fold(0.0, (s, i) => s + i.price);
+  bool hasItem(String id) => _items.any((i) => i.id == id);
+
+  void addItem(CartItem item) {
+    if (hasItem(item.id)) return;
+    _items.add(item);
+    notifyListeners();
+  }
+
+  void removeItem(String id) {
+    _items.removeWhere((i) => i.id == id);
+    notifyListeners();
+  }
+
+  void clear() {
+    _items.clear();
+    notifyListeners();
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// AD MANAGER
+// ════════════════════════════════════════════════════════════════
+class AdManager {
+  static final AdManager instance = AdManager._();
+  AdManager._();
+
+  BannerAd? bannerAd;
+  InterstitialAd? interstitialAd;
+  RewardedAd? rewardedAd;
+  bool bannerLoaded = false;
+
+  final _req = const AdRequest(
+    keywords: ['metal detector', 'treasure hunting', 'outdoor'],
+  );
+
+  void loadBanner() {
+    bannerAd?.dispose();
+    bannerLoaded = false;
+    BannerAd(
+      adUnitId: AdIds.bannerId,
+      size: AdSize.banner,
+      request: _req,
+      listener: BannerAdListener(
+        onAdLoaded: (ad) {
+          bannerAd = ad as BannerAd;
+          bannerLoaded = true;
+          Log.i('Banner loaded');
+        },
+        onAdFailedToLoad: (ad, err) {
+          ad.dispose();
+          Log.i('Banner error: ${err.code}');
+          Future.delayed(const Duration(seconds: 30), loadBanner);
+        },
+      ),
+    ).load();
+  }
+
+  void loadInterstitial() {
+    if (interstitialAd != null) return;
+    InterstitialAd.load(
+      adUnitId: AdIds.interstitialId,
+      request: _req,
+      adLoadCallback: InterstitialAdLoadCallback(
+        onAdLoaded: (ad) {
+          interstitialAd = ad;
+          Log.i('Interstitial loaded');
+        },
+        onAdFailedToLoad: (e) {
+          Log.i('Interstitial error: ${e.code}');
+          Future.delayed(const Duration(seconds: 30), loadInterstitial);
+        },
+      ),
+    );
+  }
+
+  void showInterstitial() {
+    final ad = interstitialAd;
+    if (ad == null) {
+      loadInterstitial();
+      return;
+    }
+    ad.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (a) {
+        a.dispose();
+        interstitialAd = null;
+        loadInterstitial();
+      },
+      onAdFailedToShowFullScreenContent: (a, _) {
+        a.dispose();
+        interstitialAd = null;
+        loadInterstitial();
+      },
+    );
+    ad.show();
+  }
+
+  void loadRewarded() {
+    if (rewardedAd != null) return;
+    RewardedAd.load(
+      adUnitId: AdIds.rewardedId,
+      request: _req,
+      rewardedAdLoadCallback: RewardedAdLoadCallback(
+        onAdLoaded: (ad) {
+          rewardedAd = ad;
+          Log.i('Rewarded ad loaded');
+        },
+        onAdFailedToLoad: (e) {
+          Log.i('Rewarded ad error: ${e.code}');
+          Future.delayed(const Duration(seconds: 30), loadRewarded);
+        },
+      ),
+    );
+  }
+
+  void showRewarded(VoidCallback onEarned) {
+    final ad = rewardedAd;
+    if (ad == null) {
+      loadRewarded();
+      return;
+    }
+    ad.fullScreenContentCallback = FullScreenContentCallback(
+      onAdDismissedFullScreenContent: (a) {
+        a.dispose();
+        rewardedAd = null;
+        loadRewarded();
+      },
+      onAdFailedToShowFullScreenContent: (a, _) {
+        a.dispose();
+        rewardedAd = null;
+        loadRewarded();
+      },
+    );
+    ad.show(onUserEarnedReward: (_, __) {
+      Log.i('Reward earned — 2 min PRO granted');
+      onEarned();
+    });
+  }
+
+  void disposeAll() {
+    bannerAd?.dispose();
+    interstitialAd?.dispose();
+    rewardedAd?.dispose();
+    bannerAd = null;
+    interstitialAd = null;
+    rewardedAd = null;
+    bannerLoaded = false;
+  }
+}
+
+final adManager = AdManager.instance;
+
+// ════════════════════════════════════════════════════════════════
+// APP ROOT — listens to Lang.code so the whole tree rebuilds on language change
+// ════════════════════════════════════════════════════════════════
+class SpectraApp extends StatelessWidget {
+  const SpectraApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return ChangeNotifierProvider(
+      create: (_) => ShoppingCart(),
+      child: ValueListenableBuilder<String>(
+        valueListenable: Lang.code,
+        builder: (context, langCode, _) {
+          return MaterialApp(
+            title: 'Spectra Pro',
+            debugShowCheckedModeBanner: false,
+            theme: ThemeData(
+              useMaterial3: true,
+              brightness: Brightness.dark,
+              scaffoldBackgroundColor: C.bg,
+              colorScheme: const ColorScheme.dark(
+                primary: C.cyan,
+                secondary: C.gold,
+                surface: C.surface,
+              ),
+              sliderTheme: const SliderThemeData(
+                activeTrackColor: C.cyan,
+                inactiveTrackColor: C.border,
+                thumbColor: C.cyan,
+                overlayColor: Color(0x2000D4FF),
+              ),
+              switchTheme: SwitchThemeData(
+                thumbColor: WidgetStateProperty.resolveWith(
+                  (s) => s.contains(WidgetState.selected) ? C.cyan : C.tSec,
+                ),
+                trackColor: WidgetStateProperty.resolveWith(
+                  (s) => s.contains(WidgetState.selected)
+                      ? C.cyan.withOpacity(0.35)
+                      : C.border,
+                ),
+              ),
+              fontFamily: 'Roboto',
+            ),
+            home: const _Shell(),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// ROOT SHELL
+// ════════════════════════════════════════════════════════════════
+class _Shell extends StatefulWidget {
+  const _Shell();
+  @override
+  State<_Shell> createState() => _ShellState();
+}
+
+class _ShellState extends State<_Shell>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  // ── Navigation
+  int _tab = 0;
+  late PageController _pc;
+
+  // ── IAP
+  Tier _tier = Tier.free;
+  bool _iapReady = false;
+  bool _iapBuying = false;
+  final _iap = InAppPurchase.instance;
+  StreamSubscription<List<PurchaseDetails>>? _iapSub;
+  Map<String, ProductDetails> _products = {};
+
+  // ── Rewarded PRO timer
+  Timer? _rewardedProTimer;
+  DateTime? _rewardedProExpiry;
+
+  // ── DSP
+  static const int _HIST = 300;
+  static const double _EMA_F = 0.15;
+  static const double _EMA_S = 0.04;
+  static const double _JUMP = 25.0;
+
+  // ── Sensor
+  double _rawX = 0, _rawY = 0, _rawZ = 0, _rawMag = 0;
+  double _emaFast = 50, _emaSlow = 50, _prevRaw = 50;
+  final _calBuf = <double>[];
+  double _baseline = 50, _noiseFloor = 1.5;
+  bool _caling = false, _calDone = false;
+  int _calPct = 0;
+  String _calMsg = '';
+  double _signal = 0;
+  double _mMin = 9999, _mMax = 0;
+  bool _monitoring = false;
+  final List<double> _hist = List<double>.filled(_HIST, 0.0);
+  int _hIdx = 0;
+
+  // ── Detection
+  bool _det = false;
+  String _detType = 'none';
+  double _detConf = 0;
+  int _totalDet = 0;
+  final _detections = <DetectionEvent>[];
+  final _readings = <MagReading>[];
+
+  // ── Settings
+  double _sens = 6.0;
+  double _alertT = 20.0;
+  double _strongT = 55.0;
+  double _audioVol = 0.85;
+  bool _sndOn = true;
+  bool _vibOn = true;
+  bool _autoC = true;
+
+  // ── Audio
+  final _audio = AudioPlayer();
+  bool _beeping = false;
+  DateTime? _lastBUpd;
+
+  // ── Animations
+  late AnimationController _pulseCtrl, _scanCtrl, _rippleCtrl;
+  late Animation<double> _pulseAnim, _scanAnim, _rippleAnim;
+
+  // ── Misc
+  DateTime? _sessStart;
+  int _totalSamples = 0;
+  Timer? _uiTimer;
+  bool _ready = false;
+  late SharedPreferences _prefs;
+  StreamSubscription<MagnetometerEvent>? _magSub;
+
+  // ── Computed
+  bool get _isPro => _tier != Tier.free;
+
+  int get _rewardedSecsLeft {
+    if (_tier != Tier.rewarded || _rewardedProExpiry == null) return 0;
+    final rem = _rewardedProExpiry!.difference(DateTime.now()).inSeconds;
+    return rem < 0 ? 0 : rem;
+  }
+
+  void navigateTo(int index) {
+    if (!mounted) return;
+    setState(() => _tab = index);
+    _pc.jumpToPage(index);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _pc = PageController();
+    _setupAnims();
+    _boot();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused) _magSub?.pause();
+    if (state == AppLifecycleState.resumed) _magSub?.resume();
+  }
+
+  Future<void> _boot() async {
+    Log.i('╔══════════════════════════════╗');
+    Log.i('║ SPECTRA PRO v5.0 BOOT       ║');
+    Log.i('╚══════════════════════════════╝');
+    _prefs = await SharedPreferences.getInstance();
+    _loadPrefs();
+
+    // Set calMsg after prefs load (language may have been saved)
+    _calMsg = Lang.t('waitingSensor');
+
+    _iapSub = _iap.purchaseStream.listen(_onPurchase);
+    _iapReady = await _iap.isAvailable();
+    if (_iapReady) {
+      Log.i('IAP available');
+      await _loadProducts();
+      await _iap.restorePurchases();
+    } else {
+      Log.i('IAP unavailable');
+    }
+
+    try {
+      await _audio.setAsset('assets/beep.mp3');
+      await _audio.setLoopMode(LoopMode.one);
+      await _audio.setVolume(0.0);
+      Log.i('Audio system ready');
+    } catch (e) {
+      Log.i('Audio error: $e');
+    }
+
+    if (!_isPro) {
+      adManager.loadBanner();
+      adManager.loadInterstitial();
+      adManager.loadRewarded();
+    }
+
+    _sessStart = DateTime.now();
+    _startMagnetometer();
+    if (mounted) setState(() => _ready = true);
+    if (mounted && _autoC) await _runCalibration();
+    Log.i('╔══════════════════════════════╗');
+    Log.i('║ BOOT SUCCESS ✅              ║');
+    Log.i('╚══════════════════════════════╝');
+  }
+
+  void _loadPrefs() {
+    _sndOn = _prefs.getBool('snd') ?? true;
+    _vibOn = _prefs.getBool('vib') ?? true;
+    _autoC = _prefs.getBool('autoc') ?? true;
+    _sens = _prefs.getDouble('sens') ?? 6.0;
+    _alertT = _prefs.getDouble('alt') ?? 20.0;
+    _strongT = _prefs.getDouble('str') ?? 55.0;
+    _audioVol = _prefs.getDouble('audVol') ?? 0.85;
+    // Load saved language (default 'en')
+    final savedLang = _prefs.getString('lang') ?? 'en';
+    Lang.set(savedLang);
+    final ts = _prefs.getString('tier') ?? 'free';
+    _tier = Tier.values.firstWhere(
+      (t) => t.name == ts && t != Tier.rewarded,
+      orElse: () => Tier.free,
+    );
+    Log.i('Prefs loaded: tier=${_tier.name}, lang=${Lang.code.value}');
+  }
+
+  void _savePrefs() {
+    _prefs
+      ..setBool('snd', _sndOn)
+      ..setBool('vib', _vibOn)
+      ..setBool('autoc', _autoC)
+      ..setDouble('sens', _sens)
+      ..setDouble('alt', _alertT)
+      ..setDouble('str', _strongT)
+      ..setDouble('audVol', _audioVol)
+      ..setString('lang', Lang.code.value)
+      ..setString('tier', _tier == Tier.rewarded ? 'free' : _tier.name);
+  }
+
+  void _activateRewardedPro() {
+    _rewardedProTimer?.cancel();
+    const dur = Duration(minutes: 2);
+    setState(() {
+      _tier = Tier.rewarded;
+      _rewardedProExpiry = DateTime.now().add(dur);
+    });
+    Log.i('Rewarded PRO activated — 2 min');
+    _snack(Lang.t('snackProUnlocked'), C.green);
+    _rewardedProTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      final rem = _rewardedProExpiry!.difference(DateTime.now());
+      if (rem.isNegative) {
+        t.cancel();
+        _expireRewardedPro();
+      } else {
+        setState(() {});
+      }
+    });
+  }
+
+  void _expireRewardedPro() {
+    if (!mounted) return;
+    setState(() {
+      _tier = Tier.free;
+      _rewardedProExpiry = null;
+    });
+    adManager.loadBanner();
+    adManager.loadInterstitial();
+    adManager.loadRewarded();
+    _snack(Lang.t('snackTrialExpired'), C.orange);
+    Log.i('Rewarded PRO expired');
+  }
+
+  void _watchRewardedAd() {
+    if (adManager.rewardedAd == null) {
+      adManager.loadRewarded();
+      _snack(Lang.t('snackAdLoading'), C.tSec);
+      return;
+    }
+    adManager.showRewarded(_activateRewardedPro);
+  }
+
+  Future<void> _loadProducts() async {
+    try {
+      final res = await _iap.queryProductDetails(IAPIds.all);
+      if (res.notFoundIDs.isNotEmpty) {
+        Log.i('Missing products: ${res.notFoundIDs}');
+      }
+      if (mounted) {
+        setState(() {
+          for (final p in res.productDetails) {
+            _products[p.id] = p;
+            Log.i('Product: ${p.id} — ${p.price}');
+          }
+        });
+      }
+    } catch (e) {
+      Log.i('Product load error: $e');
+    }
+  }
+
+  void _onPurchase(List<PurchaseDetails> purchases) async {
+    for (final p in purchases) {
+      Log.i('Purchase: ${p.status} — ${p.productID}');
+      if (p.status == PurchaseStatus.purchased ||
+          p.status == PurchaseStatus.restored) {
+        _grantPro(p.productID);
+        if (p.pendingCompletePurchase) {
+          try {
+            await _iap.completePurchase(p);
+          } catch (e) {
+            Log.i('completePurchase error: $e');
+          }
+        }
+      } else if (p.status == PurchaseStatus.error) {
+        Log.i('Purchase error: ${p.error?.message}');
+        if (mounted) setState(() => _iapBuying = false);
+        _snack(Lang.t('snackPurchaseFailed'), C.red);
+      } else if (p.status == PurchaseStatus.canceled) {
+        if (mounted) setState(() => _iapBuying = false);
+      }
+    }
+  }
+
+  void _grantPro(String productId) {
+    if (!mounted) return;
+    Tier t = Tier.free;
+    if (productId == IAPIds.proMonthly) t = Tier.monthly;
+    if (productId == IAPIds.proAnnual) t = Tier.annual;
+    if (productId == IAPIds.proLifetime) t = Tier.lifetime;
+    if (t == Tier.free) return;
+    _rewardedProTimer?.cancel();
+    setState(() {
+      _tier = t;
+      _iapBuying = false;
+    });
+    _prefs.setString('tier', t.name);
+    adManager.disposeAll();
+    context.read<ShoppingCart>().clear();
+    _snack(Lang.t('snackProActive'), C.green);
+    Log.i('PRO granted: $t');
+  }
+
+  void _buyProduct(ProductDetails p) {
+    if (!_iapReady) {
+      _snack(Lang.t('snackIapUnavailable'), C.red);
+      return;
+    }
+    setState(() => _iapBuying = true);
+    _iap
+        .buyNonConsumable(purchaseParam: PurchaseParam(productDetails: p))
+        .catchError((e) {
+      Log.i('buyNonConsumable error: $e');
+      if (mounted) setState(() => _iapBuying = false);
+      _snack('${Lang.t('snackPurchaseStartFailed')}: $e', C.red);
+    });
+    Log.i('Purchase initiated: ${p.id}');
+  }
+
+  void showCart() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: C.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      builder: (_) => _CartSheet(
+        products: _products,
+        onCheckout: _processCheckout,
+      ),
+    );
+  }
+
+  void _processCheckout() {
+    final cart = context.read<ShoppingCart>();
+    if (cart.items.isEmpty) {
+      _snack(Lang.t('snackCartEmpty'), C.red);
+      return;
+    }
+    final product = _products[cart.items.first.id];
+    if (product != null) {
+      _buyProduct(product);
+    } else {
+      _snack(Lang.t('snackProductNotFound'), C.red);
+    }
+  }
+
+  void _setupAnims() {
+    _pulseCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    )..repeat(reverse: true);
+    _pulseAnim = Tween(begin: 0.93, end: 1.07).animate(
+      CurvedAnimation(parent: _pulseCtrl, curve: Curves.easeInOutSine),
+    );
+
+    _scanCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 3),
+    )..repeat();
+    _scanAnim = Tween(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _scanCtrl, curve: Curves.linear),
+    );
+
+    _rippleCtrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _rippleAnim = Tween(begin: 0.3, end: 1.0).animate(
+      CurvedAnimation(parent: _rippleCtrl, curve: Curves.easeInOut),
+    );
+  }
+
+  void _startMagnetometer() {
+    _magSub?.cancel();
+    _magSub = magnetometerEventStream(
+      samplingPeriod: SensorInterval.uiInterval,
+    ).listen(_onMagEvent, onError: (e) => Log.i('Magnetometer error: $e'));
+    Log.i('Magnetometer started');
+  }
+
+  void _onMagEvent(MagnetometerEvent e) {
+    _rawX = e.x;
+    _rawY = e.y;
+    _rawZ = e.z;
+    _rawMag = sqrt(e.x * e.x + e.y * e.y + e.z * e.z);
+    _totalSamples++;
+
+    final diff = (_rawMag - _prevRaw).abs();
+    final w = diff > _JUMP ? 0.03 : _EMA_F;
+    _emaFast = w * _rawMag + (1 - w) * _emaFast;
+    _prevRaw = _rawMag;
+
+    if (_caling) _calBuf.add(_rawMag);
+
+    if (_calDone && _monitoring) {
+      if (_signal < _alertT * 0.5) {
+        _emaSlow = _EMA_S * _rawMag + (1 - _EMA_S) * _emaSlow;
+      }
+      final dev = (_emaFast - _baseline).abs();
+      _signal = (dev / _noiseFloor * _sens * 1.2).clamp(0.0, 100.0);
+      if (_emaFast < _mMin) _mMin = _emaFast;
+      if (_emaFast > _mMax) _mMax = _emaFast;
+      _hist[_hIdx] = _emaFast;
+      _hIdx = (_hIdx + 1) % _HIST;
+      _readings.add(MagReading(
+        ts: DateTime.now(),
+        x: _rawX,
+        y: _rawY,
+        z: _rawZ,
+        raw: _rawMag,
+        signal: _signal,
+      ));
+      if (_readings.length > 5000) _readings.removeAt(0);
+      _classify();
+      _feedback();
+    }
+    _schedUI();
+  }
+
+  Future<void> _runCalibration() async {
+    if (_caling) return;
+    if (mounted) {
+      setState(() {
+        _caling = true;
+        _calDone = false;
+        _calPct = 0;
+        _calMsg = Lang.t('calibrating');
+        _monitoring = false;
+        _det = false;
+        _signal = 0;
+        _calBuf.clear();
+        _hist.fillRange(0, _HIST, 0.0);
+        _hIdx = 0;
+        _mMin = 9999;
+        _mMax = 0;
+      });
+    }
+    try {
+      await _audio.stop();
+    } catch (_) {}
+    for (int i = 0; i < 10; i++) {
+      await Future.delayed(const Duration(seconds: 1));
+      if (mounted) setState(() => _calPct = (i + 1) * 10);
+    }
+    _computeBaseline();
+    if (mounted) {
+      setState(() {
+        _caling = false;
+        _calDone = true;
+        _monitoring = true;
+        _calMsg = Lang.t('calibrated');
+      });
+    }
+  }
+
+  void _computeBaseline() {
+    if (_calBuf.isEmpty) {
+      _baseline = _rawMag.isFinite ? _rawMag : 50;
+      _noiseFloor = 2.0;
+    } else {
+      _baseline = _calBuf.reduce((a, b) => a + b) / _calBuf.length;
+      _noiseFloor = 1.5;
+    }
+    _emaFast = _emaSlow = _baseline;
+    _mMin = _baseline;
+    _mMax = _baseline;
+    _calBuf.clear();
+    Log.i('Baseline: ${_baseline.toStringAsFixed(3)} µT');
+  }
+
+  void _classify() {
+    if (_signal > _alertT) {
+      final isStrong = _signal > _strongT;
+      _detType = isStrong ? 'ferrous' : 'nonferrous';
+      _detConf = isStrong ? 0.88 : 0.74;
+      if (!_det) {
+        _det = true;
+        _totalDet++;
+        _detections.add(DetectionEvent(
+          ts: DateTime.now(),
+          type: _detType,
+          conf: _detConf,
+          signal: _signal,
+          label: isStrong ? Lang.t('ferrousSteel') : Lang.t('nonFerrous'),
+          color: isStrong ? C.red : C.orange,
+          icon: isStrong
+              ? Icons.bolt_rounded
+              : Icons.radio_button_checked_rounded,
+        ));
+        Log.i('Detection: $_detType @ ${_signal.toStringAsFixed(1)}');
+      }
+    } else {
+      if (_det) {
+        _det = false;
+        _detType = 'none';
+      }
+    }
+  }
+
+  void _feedback() {
+    if (_signal > _alertT) {
+      if (_sndOn) {
+        final spd = (0.5 + (_signal / 100) * 2.2).clamp(0.5, 2.7);
+        if (!_beeping) {
+          _audio.play().catchError((_) {});
+          _audio.setVolume(_audioVol).catchError((_) {});
+          _beeping = true;
+        }
+        final now = DateTime.now();
+        if (_lastBUpd == null ||
+            now.difference(_lastBUpd!).inMilliseconds > 80) {
+          _audio.setSpeed(spd).catchError((_) {});
+          _lastBUpd = now;
+        }
+      }
+      if (_vibOn) {
+        try {
+          Vibration.vibrate(
+            duration: (_signal > _strongT) ? 250 : 120,
+            amplitude: 180,
+          );
+        } catch (_) {}
+      }
+    } else if (_beeping) {
+      _audio.stop().catchError((_) {});
+      _audio.setVolume(0.0).catchError((_) {});
+      _beeping = false;
+    }
+  }
+
+  void _schedUI() {
+    _uiTimer?.cancel();
+    _uiTimer = Timer(const Duration(milliseconds: 55), () {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _snack(String msg, Color bg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg,
+            style: const TextStyle(
+                fontWeight: FontWeight.w700, color: Colors.white)),
+        backgroundColor: bg,
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _magSub?.cancel();
+    _iapSub?.cancel();
+    _uiTimer?.cancel();
+    _rewardedProTimer?.cancel();
+    _audio.dispose();
+    _pulseCtrl.dispose();
+    _scanCtrl.dispose();
+    _rippleCtrl.dispose();
+    _pc.dispose();
+    adManager.disposeAll();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_ready) return const _Splash();
+    final bannerH =
+        (!_isPro && adManager.bannerLoaded && adManager.bannerAd != null)
+            ? adManager.bannerAd!.size.height.toDouble()
+            : 0.0;
+
+    return Scaffold(
+      backgroundColor: C.bg,
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              'assets/images.png',
+              fit: BoxFit.cover,
+            ),
+          ),
+          Positioned.fill(
+            child: Container(color: C.bg.withOpacity(0.72)),
+          ),
+          PageView(
+            controller: _pc,
+            physics: const NeverScrollableScrollPhysics(),
+            children: [
+              _ScanPage(state: this),
+              _ShopPage(state: this),
+              _AnalyticsPage(state: this),
+              _SettingsPage(state: this),
+            ],
+          ),
+          if (_iapBuying)
+            Container(
+              color: Colors.black.withOpacity(0.7),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(
+                        color: C.cyan, strokeWidth: 2.5),
+                    const SizedBox(height: 20),
+                    Text(Lang.t('processing'),
+                        style: const TextStyle(color: C.tPrim, fontSize: 15)),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _NavBar(
+            tab: _tab,
+            cartCount: context.watch<ShoppingCart>().itemCount,
+            isPro: _isPro,
+            onTap: (i) {
+              setState(() => _tab = i);
+              _pc.jumpToPage(i);
+            },
+          ),
+          if (!_isPro && adManager.bannerLoaded && adManager.bannerAd != null)
+            SizedBox(
+              height: bannerH,
+              child: AdWidget(ad: adManager.bannerAd!),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Splash extends StatelessWidget {
+  const _Splash();
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        backgroundColor: C.bg,
+        body: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.asset('assets/images.png', fit: BoxFit.cover),
+            Container(color: C.bg.withOpacity(0.75)),
+            const Center(
+              child: CircularProgressIndicator(color: C.cyan),
+            ),
+          ],
+        ),
+      );
+}
+
+// ════════════════════════════════════════════════════════════════
+// BOTTOM NAVIGATION BAR
+// ════════════════════════════════════════════════════════════════
+class _NavBar extends StatelessWidget {
+  final int tab;
+  final int cartCount;
+  final bool isPro;
+  final ValueChanged<int> onTap;
+  const _NavBar({
+    required this.tab,
+    required this.cartCount,
+    required this.isPro,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final items = [
+      (Icons.radar_rounded, Lang.t('navScan')),
+      (Icons.shopping_bag_rounded, Lang.t('navShop')),
+      (Icons.analytics_rounded, Lang.t('navAnalytics')),
+      (Icons.settings_rounded, Lang.t('navSettings')),
+    ];
+    return Container(
+      decoration: BoxDecoration(
+        color: C.surface.withOpacity(0.95),
+        border: const Border(top: BorderSide(color: C.border)),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        children: List.generate(items.length, (i) {
+          final (icon, label) = items[i];
+          final active = tab == i;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () => onTap(i),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Stack(
+                    clipBehavior: Clip.none,
+                    children: [
+                      Icon(icon, color: active ? C.cyan : C.tSec, size: 22),
+                      if (i == 1 && cartCount > 0)
+                        Positioned(
+                          top: -4,
+                          right: -6,
+                          child: Container(
+                            width: 16,
+                            height: 16,
+                            decoration: const BoxDecoration(
+                                color: C.red, shape: BoxShape.circle),
+                            child: Center(
+                              child: Text('$cartCount',
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.w900)),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 3),
+                  Text(label,
+                      style: TextStyle(
+                          color: active ? C.cyan : C.tSec, fontSize: 10)),
+                ],
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// SCAN PAGE
+// ════════════════════════════════════════════════════════════════
+class _ScanPage extends StatelessWidget {
+  final _ShellState state;
+  const _ScanPage({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    final sigColor = C.signalColor(s._signal, s._alertT, s._strongT);
+    return SafeArea(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 14, 20, 0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text('SPECTRA',
+                              style: TextStyle(
+                                color: C.cyan,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                                letterSpacing: 3,
+                                fontFamily: C.mono,
+                              )),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: C.cyan.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border:
+                                  Border.all(color: C.cyan.withOpacity(0.4)),
+                            ),
+                            child: Text(Lang.t('pro'),
+                                style: const TextStyle(
+                                  color: C.cyan,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 1.5,
+                                )),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 2),
+                      _TierStatusBadge(state: s),
+                    ],
+                  ),
+                  if (!s._isPro)
+                    GestureDetector(
+                      onTap: () => s.showCart(),
+                      child: _ProBadge(
+                          count: context.watch<ShoppingCart>().itemCount),
+                    ),
+                ],
+              ),
+            ),
+            if (s._tier == Tier.rewarded) _RewardedCountdownBar(state: s),
+            if (!s._isPro) _RewardedAdBanner(state: s),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+              child: _CalBar(state: s),
+            ),
+            SizedBox(
+              height: 340,
+              child: Center(
+                child: AnimatedBuilder(
+                  animation: Listenable.merge(
+                      [s._pulseAnim, s._scanAnim, s._rippleAnim]),
+                  builder: (_, __) =>
+                      _RadarWidget(state: s, sigColor: sigColor),
+                ),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 4),
+              child: _SignalBar(state: s, sigColor: sigColor),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: _RawRow(state: s),
+            ),
+            if (s._det)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: _DetectionBanner(state: s, sigColor: sigColor),
+              )
+            else
+              const SizedBox(height: 12),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _TierStatusBadge extends StatelessWidget {
+  final _ShellState state;
+  const _TierStatusBadge({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    if (s._tier == Tier.rewarded) {
+      final secs = s._rewardedSecsLeft;
+      final min = secs ~/ 60;
+      final sec = secs % 60;
+      return Text(
+        '⏱ ${Lang.t('proTrial')}: ${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}',
+        style: const TextStyle(
+            color: C.gold, fontSize: 10, fontWeight: FontWeight.w700),
+      );
+    }
+    if (s._isPro) {
+      return Text(Lang.t('proFullAccess'),
+          style: const TextStyle(color: C.green, fontSize: 10));
+    }
+    return Text(Lang.t('freeVersion'),
+        style: const TextStyle(color: C.tSec, fontSize: 10));
+  }
+}
+
+class _RewardedCountdownBar extends StatelessWidget {
+  final _ShellState state;
+  const _RewardedCountdownBar({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    final secs = s._rewardedSecsLeft;
+    final frac = secs / 120.0;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: C.gold.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: C.gold.withOpacity(0.4)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.timer_rounded, color: C.gold, size: 14),
+            const SizedBox(width: 8),
+            Text(Lang.t('trialActive'),
+                style: const TextStyle(
+                    color: C.gold, fontSize: 11, fontWeight: FontWeight.w700)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: frac.clamp(0.0, 1.0),
+                  backgroundColor: C.border,
+                  valueColor: const AlwaysStoppedAnimation<Color>(C.gold),
+                  minHeight: 5,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text('${secs}s',
+                style: const TextStyle(
+                    color: C.gold, fontSize: 10, fontFamily: C.mono)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RewardedAdBanner extends StatelessWidget {
+  final _ShellState state;
+  const _RewardedAdBanner({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+      child: GestureDetector(
+        onTap: s._watchRewardedAd,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(colors: [
+              C.purple.withOpacity(0.18),
+              C.cyan.withOpacity(0.12),
+            ]),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: C.purple.withOpacity(0.55), width: 1.5),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: C.purple.withOpacity(0.15),
+                  border: Border.all(color: C.purple.withOpacity(0.5)),
+                ),
+                child: const Icon(Icons.play_circle_filled_rounded,
+                    color: C.purple, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(Lang.t('watchAdTitle'),
+                        style: const TextStyle(
+                          color: C.tPrim,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                        )),
+                    const SizedBox(height: 2),
+                    Text(Lang.t('watchAdSub'),
+                        style: const TextStyle(color: C.tSec, fontSize: 10)),
+                  ],
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: C.purple,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(Lang.t('watchBtn'),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1,
+                    )),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProBadge extends StatelessWidget {
+  final int count;
+  const _ProBadge({required this.count});
+  @override
+  Widget build(BuildContext context) => Stack(
+        alignment: Alignment.topRight,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(11),
+            decoration: BoxDecoration(
+              color: C.cyan.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: C.cyan.withOpacity(0.4)),
+            ),
+            child: const Icon(Icons.workspace_premium_rounded,
+                color: C.cyan, size: 20),
+          ),
+          if (count > 0)
+            Positioned(
+              top: -2,
+              right: -2,
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration:
+                    const BoxDecoration(color: C.red, shape: BoxShape.circle),
+                child: Center(
+                  child: Text('$count',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900)),
+                ),
+              ),
+            ),
+        ],
+      );
+}
+
+class _CalBar extends StatelessWidget {
+  final _ShellState state;
+  const _CalBar({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      decoration: BoxDecoration(
+        color: C.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: C.border),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            s._caling
+                ? Icons.autorenew_rounded
+                : s._calDone
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked_rounded,
+            color: s._caling
+                ? C.orange
+                : s._calDone
+                    ? C.green
+                    : C.tDim,
+            size: 14,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+              child: Text(
+                  s._calMsg.isNotEmpty ? s._calMsg : Lang.t('waitingSensor'),
+                  style: const TextStyle(color: C.tSec, fontSize: 11))),
+          if (s._caling) ...[
+            SizedBox(
+              width: 60,
+              height: 4,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: s._calPct / 100,
+                  backgroundColor: C.border,
+                  valueColor: const AlwaysStoppedAnimation<Color>(C.orange),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Text('${s._calPct}%',
+                style: const TextStyle(
+                    color: C.orange, fontSize: 10, fontFamily: C.mono)),
+          ] else
+            GestureDetector(
+              onTap: () => s._runCalibration(),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: C.cyan.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: C.cyan.withOpacity(0.35)),
+                ),
+                child: Text(Lang.t('recalibrate'),
+                    style: const TextStyle(color: C.cyan, fontSize: 10)),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RadarWidget extends StatelessWidget {
+  final _ShellState state;
+  final Color sigColor;
+  const _RadarWidget({required this.state, required this.sigColor});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return SizedBox(
+      width: 300,
+      height: 300,
+      child: CustomPaint(
+        painter: _RadarPainter(
+          signal: s._signal,
+          sigColor: sigColor,
+          scanAngle: s._scanAnim.value * 2 * pi,
+          ripple: s._rippleAnim.value,
+          detected: s._det,
+          pulse: s._pulseAnim.value,
+          hist: s._hist,
+          hIdx: s._hIdx,
+        ),
+        child: Center(
+          child: Transform.scale(
+            scale: s._det ? s._pulseAnim.value : 1.0,
+            child: _RadarCenter(state: s, sigColor: sigColor),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RadarPainter extends CustomPainter {
+  final double signal, scanAngle, ripple, pulse;
+  final Color sigColor;
+  final bool detected;
+  final List<double> hist;
+  final int hIdx;
+  const _RadarPainter({
+    required this.signal,
+    required this.sigColor,
+    required this.scanAngle,
+    required this.ripple,
+    required this.detected,
+    required this.pulse,
+    required this.hist,
+    required this.hIdx,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final cx = size.width / 2, cy = size.height / 2;
+    final maxR = size.width / 2 - 8;
+
+    for (final frac in [0.33, 0.66, 1.0]) {
+      canvas.drawCircle(
+        Offset(cx, cy),
+        maxR * frac,
+        Paint()
+          ..color = C.border.withOpacity(detected ? 0.5 : 0.25)
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8,
+      );
+    }
+
+    final crossPaint = Paint()
+      ..color = C.border.withOpacity(0.2)
+      ..strokeWidth = 0.6;
+    canvas.drawLine(Offset(cx, cy - maxR), Offset(cx, cy + maxR), crossPaint);
+    canvas.drawLine(Offset(cx - maxR, cy), Offset(cx + maxR, cy), crossPaint);
+
+    canvas.drawCircle(
+      Offset(cx, cy),
+      maxR,
+      Paint()
+        ..shader = SweepGradient(
+          startAngle: scanAngle - 1.2,
+          endAngle: scanAngle,
+          colors: [
+            sigColor.withOpacity(0.0),
+            sigColor.withOpacity(detected ? 0.22 : 0.1),
+          ],
+          tileMode: TileMode.clamp,
+        ).createShader(Rect.fromCircle(center: Offset(cx, cy), radius: maxR))
+        ..style = PaintingStyle.fill,
+    );
+
+    canvas.drawLine(
+      Offset(cx, cy),
+      Offset(cx + cos(scanAngle) * maxR, cy + sin(scanAngle) * maxR),
+      Paint()
+        ..color = sigColor.withOpacity(detected ? 0.8 : 0.4)
+        ..strokeWidth = 1.5,
+    );
+
+    if (detected) {
+      for (int i = 1; i <= 3; i++) {
+        canvas.drawCircle(
+          Offset(cx, cy),
+          maxR * (0.3 + i * 0.2) * ripple,
+          Paint()
+            ..color = sigColor.withOpacity(0.5 * (1 - i * 0.25))
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0,
+        );
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RadarPainter old) => true;
+}
+
+class _RadarCenter extends StatelessWidget {
+  final _ShellState state;
+  final Color sigColor;
+  const _RadarCenter({required this.state, required this.sigColor});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return Container(
+      width: 150,
+      height: 150,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: sigColor.withOpacity(0.07),
+        border: Border.all(
+            color: sigColor.withOpacity(s._det ? 0.9 : 0.4), width: 2),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(s._signal.toStringAsFixed(1),
+              style: TextStyle(
+                fontSize: 40,
+                fontWeight: FontWeight.w900,
+                color: sigColor,
+                fontFamily: C.mono,
+                height: 1,
+              )),
+          const SizedBox(height: 4),
+          Text(
+            s._det
+                ? (s._detType == 'ferrous'
+                    ? Lang.t('ferrous')
+                    : Lang.t('metal'))
+                : s._calDone
+                    ? Lang.t('scanning')
+                    : Lang.t('calibration'),
+            style: TextStyle(
+              fontSize: 9,
+              color: sigColor.withOpacity(0.85),
+              letterSpacing: 2.5,
+              fontFamily: C.mono,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SignalBar extends StatelessWidget {
+  final _ShellState state;
+  final Color sigColor;
+  const _SignalBar({required this.state, required this.sigColor});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return Column(
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(Lang.t('signal'),
+                style: const TextStyle(
+                    color: C.tSec, fontSize: 9, letterSpacing: 2.5)),
+            Text('${s._signal.toStringAsFixed(1)} / 100',
+                style: TextStyle(
+                    color: sigColor, fontSize: 11, fontFamily: C.mono)),
+          ],
+        ),
+        const SizedBox(height: 6),
+        LayoutBuilder(builder: (context, constraints) {
+          final totalWidth = constraints.maxWidth;
+          return Stack(
+            children: [
+              Container(
+                height: 10,
+                width: totalWidth,
+                decoration: BoxDecoration(
+                    color: C.border, borderRadius: BorderRadius.circular(6)),
+              ),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 50),
+                height: 10,
+                width: (s._signal / 100 * totalWidth).clamp(0, totalWidth),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [C.cyan, sigColor]),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+              Positioned(
+                left: (s._alertT / 100 * totalWidth).clamp(0, totalWidth - 2),
+                top: 0,
+                bottom: 0,
+                child: Container(width: 2, height: 10, color: C.orange),
+              ),
+              Positioned(
+                left: (s._strongT / 100 * totalWidth).clamp(0, totalWidth - 2),
+                top: 0,
+                bottom: 0,
+                child: Container(width: 2, height: 10, color: C.red),
+              ),
+            ],
+          );
+        }),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+}
+
+class _RawRow extends StatelessWidget {
+  final _ShellState state;
+  const _RawRow({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: C.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: C.border),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _RawVal('X', s._rawX, C.cyan),
+          _Div(),
+          _RawVal('Y', s._rawY, C.purple),
+          _Div(),
+          _RawVal('Z', s._rawZ, C.gold),
+          _Div(),
+          _RawVal('|M|', s._rawMag, C.green),
+        ],
+      ),
+    );
+  }
+}
+
+class _Div extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) =>
+      Container(height: 24, width: 1, color: C.border);
+}
+
+class _RawVal extends StatelessWidget {
+  final String label;
+  final double val;
+  final Color color;
+  const _RawVal(this.label, this.val, this.color);
+  @override
+  Widget build(BuildContext context) => Column(
+        children: [
+          Text(label,
+              style: TextStyle(
+                  color: color.withOpacity(0.6),
+                  fontSize: 9,
+                  letterSpacing: 1,
+                  fontFamily: C.mono)),
+          const SizedBox(height: 3),
+          Text(val.toStringAsFixed(1),
+              style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontFamily: C.mono,
+                  fontWeight: FontWeight.w700)),
+        ],
+      );
+}
+
+class _DetectionBanner extends StatelessWidget {
+  final _ShellState state;
+  final Color sigColor;
+  const _DetectionBanner({required this.state, required this.sigColor});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    final isStrong = s._detType == 'ferrous';
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 20),
+      decoration: BoxDecoration(
+        color: sigColor.withOpacity(0.12),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: sigColor.withOpacity(0.6), width: 1.5),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+              isStrong
+                  ? Icons.bolt_rounded
+                  : Icons.radio_button_checked_rounded,
+              color: sigColor,
+              size: 22),
+          const SizedBox(width: 10),
+          Text(
+              isStrong
+                  ? Lang.t('ferrousDetected')
+                  : Lang.t('nonFerrousDetected'),
+              style: TextStyle(
+                color: sigColor,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1.5,
+              )),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// SHOP PAGE
+// ════════════════════════════════════════════════════════════════
+class _ShopPage extends StatelessWidget {
+  final _ShellState state;
+  const _ShopPage({required this.state});
+
+  List<CartItem> get _plans => [
+        CartItem(
+          id: IAPIds.proMonthly,
+          title: Lang.t('monthlyPlan'),
+          description: Lang.t('monthlyDesc'),
+          price: 2.99,
+          duration: Lang.t('durationOneMonth'),
+          originalPrice: '5.99',
+          discount: 50,
+        ),
+        CartItem(
+          id: IAPIds.proAnnual,
+          title: Lang.t('annualPlan'),
+          description: Lang.t('annualDesc'),
+          price: 19.99,
+          duration: Lang.t('durationTwelveMonths'),
+          originalPrice: '35.88',
+          discount: 44,
+        ),
+        CartItem(
+          id: IAPIds.proLifetime,
+          title: Lang.t('lifetimePlan'),
+          description: Lang.t('lifetimeDesc'),
+          price: 49.99,
+          duration: Lang.t('durationUnlimited'),
+          originalPrice: '99.99',
+          discount: 50,
+        ),
+      ];
+
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    final cart = context.watch<ShoppingCart>();
+    if (s._tier == Tier.monthly ||
+        s._tier == Tier.annual ||
+        s._tier == Tier.lifetime) {
+      return _ProActivePage(tier: s._tier);
+    }
+    return SafeArea(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(Lang.t('upgradeToPro'),
+                        style: const TextStyle(
+                          color: C.cyan,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                        )),
+                    Text(Lang.t('upgradeSub'),
+                        style: const TextStyle(color: C.tSec, fontSize: 11)),
+                  ],
+                ),
+                Stack(
+                  alignment: Alignment.topRight,
+                  children: [
+                    GestureDetector(
+                      onTap: () => s.showCart(),
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: C.card,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: C.border),
+                        ),
+                        child: const Icon(Icons.shopping_cart_outlined,
+                            color: C.cyan, size: 22),
+                      ),
+                    ),
+                    if (cart.itemCount > 0)
+                      Positioned(
+                        top: -4,
+                        right: -4,
+                        child: Container(
+                          width: 22,
+                          height: 22,
+                          decoration: const BoxDecoration(
+                              color: C.red, shape: BoxShape.circle),
+                          child: Center(
+                            child: Text('${cart.itemCount}',
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900)),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+            _ShopRewardedCard(state: s),
+            const SizedBox(height: 20),
+            _SectionLabel(Lang.t('proFeatures')),
+            const SizedBox(height: 8),
+            _FeatureGrid(),
+            const SizedBox(height: 24),
+            _SectionLabel(Lang.t('choosePlan')),
+            const SizedBox(height: 8),
+            ..._plans.map((item) {
+              final inCart = cart.hasItem(item.id);
+              return _ProductCard(
+                item: item,
+                isInCart: inCart,
+                onAdd: () => cart.addItem(item),
+                onRemove: () => cart.removeItem(item.id),
+              );
+            }),
+            const SizedBox(height: 16),
+            Center(
+              child: Text(
+                Lang.t('managedByPlay'),
+                style: const TextStyle(color: C.tDim, fontSize: 10),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ShopRewardedCard extends StatelessWidget {
+  final _ShellState state;
+  const _ShopRewardedCard({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    if (s._tier == Tier.rewarded) {
+      final secs = s._rewardedSecsLeft;
+      final min = secs ~/ 60;
+      final sec = secs % 60;
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [
+            C.gold.withOpacity(0.12),
+            C.orange.withOpacity(0.08),
+          ]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: C.gold.withOpacity(0.55), width: 1.5),
+        ),
+        child: Column(
+          children: [
+            const Icon(Icons.workspace_premium_rounded,
+                color: C.gold, size: 36),
+            const SizedBox(height: 8),
+            Text(Lang.t('trialActive'),
+                style: const TextStyle(
+                  color: C.gold,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900,
+                )),
+            const SizedBox(height: 4),
+            Text(
+              '${Lang.t('timeLeft')}: ${min.toString().padLeft(2, '0')}:${sec.toString().padLeft(2, '0')}',
+              style: const TextStyle(color: C.tSec, fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: (secs / 120.0).clamp(0.0, 1.0),
+                backgroundColor: C.border,
+                valueColor: const AlwaysStoppedAnimation<Color>(C.gold),
+                minHeight: 7,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(Lang.t('subscribeForever'),
+                style: const TextStyle(color: C.tDim, fontSize: 11)),
+          ],
+        ),
+      );
+    }
+    return GestureDetector(
+      onTap: s._watchRewardedAd,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(colors: [
+            C.purple.withOpacity(0.18),
+            C.cyan.withOpacity(0.10),
+          ]),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: C.purple.withOpacity(0.6), width: 1.5),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: C.purple.withOpacity(0.15),
+                    border: Border.all(color: C.purple.withOpacity(0.5)),
+                  ),
+                  child: const Icon(Icons.play_circle_filled_rounded,
+                      color: C.purple, size: 28),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(Lang.t('tryProFree'),
+                          style: const TextStyle(
+                            color: C.tPrim,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                          )),
+                      const SizedBox(height: 3),
+                      Text(Lang.t('tryProSub'),
+                          style: const TextStyle(color: C.tSec, fontSize: 11)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton.icon(
+                onPressed: s._watchRewardedAd,
+                icon: const Icon(Icons.play_arrow_rounded, size: 20),
+                label: Text(Lang.t('watchAdEarn'),
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 0.8)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: C.purple,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(Lang.t('freeNoCommit'),
+                style: const TextStyle(color: C.tDim, fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProActivePage extends StatelessWidget {
+  final Tier tier;
+  const _ProActivePage({required this.tier});
+  @override
+  Widget build(BuildContext context) => SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: C.cyan.withOpacity(0.1),
+                    border:
+                        Border.all(color: C.cyan.withOpacity(0.5), width: 2),
+                  ),
+                  child: const Icon(Icons.workspace_premium_rounded,
+                      color: C.cyan, size: 50),
+                ),
+                const SizedBox(height: 24),
+                Text(Lang.t('proActive'),
+                    style: const TextStyle(
+                      color: C.cyan,
+                      fontSize: 24,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 3,
+                    )),
+                const SizedBox(height: 8),
+                Text(
+                  tier == Tier.monthly
+                      ? Lang.t('monthlySub')
+                      : tier == Tier.annual
+                          ? Lang.t('annualSub')
+                          : Lang.t('lifetimeLic'),
+                  style: const TextStyle(color: C.tSec, fontSize: 14),
+                ),
+                const SizedBox(height: 32),
+                ...[
+                  Lang.t('featAnalyticsFull'),
+                  Lang.t('featCsvFull'),
+                  Lang.t('featThreshFull'),
+                  Lang.t('featAdFreeFull'),
+                  Lang.t('featManualCalFull'),
+                  Lang.t('featAudioSensFull'),
+                ].map((f) => Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.check_circle_rounded,
+                              color: C.green, size: 18),
+                          const SizedBox(width: 10),
+                          Text(f,
+                              style: const TextStyle(
+                                  color: C.tPrim, fontSize: 13)),
+                        ],
+                      ),
+                    )),
+              ],
+            ),
+          ),
+        ),
+      );
+}
+
+class _FeatureGrid extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final features = [
+      (
+        Icons.analytics_rounded,
+        Lang.t('featGridAnalytics'),
+        Lang.t('featGridAnalyticsSub')
+      ),
+      (Icons.download_rounded, Lang.t('featGridCsv'), Lang.t('featGridCsvSub')),
+      (
+        Icons.tune_rounded,
+        Lang.t('featGridThresh'),
+        Lang.t('featGridThreshSub')
+      ),
+      (
+        Icons.block_rounded,
+        Lang.t('featGridAdFree'),
+        Lang.t('featGridAdFreeSub')
+      ),
+      (Icons.build_rounded, Lang.t('featGridCal'), Lang.t('featGridCalSub')),
+      (
+        Icons.volume_up_rounded,
+        Lang.t('featGridAudio'),
+        Lang.t('featGridAudioSub')
+      ),
+    ];
+    return GridView.count(
+      crossAxisCount: 3,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisSpacing: 8,
+      mainAxisSpacing: 8,
+      childAspectRatio: 1.1,
+      children: features.map((f) {
+        final (icon, title, sub) = f;
+        return Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: C.card,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: C.border),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: C.cyan, size: 22),
+              const SizedBox(height: 6),
+              Text(title,
+                  style: const TextStyle(
+                      color: C.tPrim,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700),
+                  textAlign: TextAlign.center),
+              Text(sub,
+                  style: const TextStyle(color: C.tDim, fontSize: 8),
+                  textAlign: TextAlign.center),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _ProductCard extends StatelessWidget {
+  final CartItem item;
+  final bool isInCart;
+  final VoidCallback onAdd, onRemove;
+  const _ProductCard({
+    required this.item,
+    required this.isInCart,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isBest = item.duration == Lang.t('durationTwelveMonths');
+    final isLife = item.duration == Lang.t('durationUnlimited');
+    final badgeColor = isLife ? C.purple : C.cyan;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: C.card,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isBest
+              ? C.cyan.withOpacity(0.5)
+              : isLife
+                  ? C.purple.withOpacity(0.4)
+                  : C.border,
+          width: isBest ? 1.5 : 1.0,
+        ),
+      ),
+      child: Stack(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.title,
+                            style: const TextStyle(
+                                color: C.tPrim,
+                                fontSize: 15,
+                                fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 2),
+                        Text(item.description,
+                            style:
+                                const TextStyle(color: C.tSec, fontSize: 11)),
+                      ],
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: C.green.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: C.green.withOpacity(0.35)),
+                      ),
+                      child: Text('-${item.discount}% ${Lang.t('discountOff')}',
+                          style: const TextStyle(
+                              color: C.green,
+                              fontSize: 9,
+                              fontWeight: FontWeight.w900)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.baseline,
+                  textBaseline: TextBaseline.alphabetic,
+                  children: [
+                    Text('\$${item.originalPrice}',
+                        style: const TextStyle(
+                            color: C.tDim,
+                            fontSize: 12,
+                            decoration: TextDecoration.lineThrough)),
+                    const SizedBox(width: 10),
+                    Text('\$${item.price.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                            color: C.tPrim,
+                            fontSize: 26,
+                            fontWeight: FontWeight.w900,
+                            fontFamily: C.mono)),
+                  ],
+                ),
+                Text(
+                    isLife
+                        ? '${Lang.t('oneTimePay')} · ${item.duration}'
+                        : '${Lang.t('perDuration')} ${item.duration}',
+                    style: const TextStyle(color: C.tDim, fontSize: 10)),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: isInCart
+                      ? OutlinedButton.icon(
+                          onPressed: onRemove,
+                          icon:
+                              const Icon(Icons.check_circle_rounded, size: 16),
+                          label: Text(Lang.t('inCart'),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700)),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: C.green,
+                            side: const BorderSide(color: C.green),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                          ),
+                        )
+                      : ElevatedButton.icon(
+                          onPressed: onAdd,
+                          icon: const Icon(Icons.add_shopping_cart, size: 16),
+                          label: Text(Lang.t('addToCart'),
+                              style:
+                                  const TextStyle(fontWeight: FontWeight.w700)),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: isBest
+                                ? C.cyan
+                                : isLife
+                                    ? C.purple
+                                    : C.cardAlt,
+                            foregroundColor:
+                                isBest || isLife ? Colors.black : C.tPrim,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            elevation: 0,
+                          ),
+                        ),
+                ),
+              ],
+            ),
+          ),
+          if (isBest || isLife)
+            Positioned(
+              top: 0,
+              right: 0,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: badgeColor,
+                  borderRadius: const BorderRadius.only(
+                    topRight: Radius.circular(16),
+                    bottomLeft: Radius.circular(12),
+                  ),
+                ),
+                child:
+                    Text(isBest ? Lang.t('bestValue') : Lang.t('lifetimeBadge'),
+                        style: TextStyle(
+                          color: badgeColor == C.purple
+                              ? Colors.white
+                              : Colors.black,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1,
+                        )),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// CART SHEET
+// ════════════════════════════════════════════════════════════════
+class _CartSheet extends StatelessWidget {
+  final Map<String, ProductDetails> products;
+  final VoidCallback onCheckout;
+  const _CartSheet({required this.products, required this.onCheckout});
+
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.watch<ShoppingCart>();
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+          16, 8, 16, MediaQuery.of(context).viewInsets.bottom + 20),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40,
+            height: 4,
+            margin: const EdgeInsets.symmetric(vertical: 12),
+            decoration: BoxDecoration(
+                color: C.border, borderRadius: BorderRadius.circular(4)),
+          ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(Lang.t('cart'),
+                  style: const TextStyle(
+                    color: C.cyan,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 2,
+                  )),
+              IconButton(
+                onPressed: () => Navigator.pop(context),
+                icon: const Icon(Icons.close, color: C.tSec, size: 20),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (cart.items.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Column(
+                children: [
+                  const Icon(Icons.shopping_cart_outlined,
+                      color: C.tDim, size: 52),
+                  const SizedBox(height: 12),
+                  Text(Lang.t('cartEmpty'),
+                      style: const TextStyle(
+                          color: C.tSec,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600)),
+                  const SizedBox(height: 4),
+                  Text(Lang.t('choosePlanArrow'),
+                      style: const TextStyle(color: C.tDim, fontSize: 11)),
+                  const SizedBox(height: 20),
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(Lang.t('pickPlanCta'),
+                        style: const TextStyle(color: C.cyan)),
+                  ),
+                ],
+              ),
+            )
+          else ...[
+            ...cart.items.map((item) => _CartTile(item: item)),
+            const Divider(color: C.border, height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(Lang.t('total'),
+                    style: const TextStyle(
+                        color: C.cyan,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900)),
+                Text('\$${cart.totalPrice.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                        color: C.cyan,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w900,
+                        fontFamily: C.mono)),
+              ],
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  onCheckout();
+                },
+                icon: const Icon(Icons.payment_rounded, size: 20),
+                label: Text(Lang.t('subscribeNow'),
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 1.5)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: C.cyan,
+                  foregroundColor: Colors.black,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                  elevation: 0,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              Lang.t('billedByPlay'),
+              style: const TextStyle(color: C.tDim, fontSize: 10),
+              textAlign: TextAlign.center,
+            ),
+          ],
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _CartTile extends StatelessWidget {
+  final CartItem item;
+  const _CartTile({required this.item});
+  @override
+  Widget build(BuildContext context) {
+    final cart = context.read<ShoppingCart>();
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: C.card,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: C.border),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(item.title,
+                    style: const TextStyle(
+                        color: C.tPrim,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700)),
+                Text(item.description,
+                    style: const TextStyle(color: C.tSec, fontSize: 10)),
+              ],
+            ),
+          ),
+          Text('\$${item.price.toStringAsFixed(2)}',
+              style: const TextStyle(
+                  color: C.cyan,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  fontFamily: C.mono)),
+          const SizedBox(width: 8),
+          GestureDetector(
+            onTap: () => cart.removeItem(item.id),
+            child: Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: C.red.withOpacity(0.1),
+                shape: BoxShape.circle,
+                border: Border.all(color: C.red.withOpacity(0.3)),
+              ),
+              child: const Icon(Icons.close, color: C.red, size: 14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// ANALYTICS PAGE
+// ════════════════════════════════════════════════════════════════
+class _AnalyticsPage extends StatelessWidget {
+  final _ShellState state;
+  const _AnalyticsPage({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    final dur = s._sessStart != null
+        ? DateTime.now().difference(s._sessStart!)
+        : Duration.zero;
+    final durStr =
+        '${dur.inMinutes}:${(dur.inSeconds % 60).toString().padLeft(2, '0')}';
+    double avg = 0.0, peak = 0.0;
+    if (s._readings.isNotEmpty) {
+      avg = s._readings.map((r) => r.signal).reduce((a, b) => a + b) /
+          s._readings.length;
+      peak = s._readings.map((r) => r.signal).reduce((a, b) => a > b ? a : b);
+    }
+    final secs = s._sessStart != null
+        ? DateTime.now().difference(s._sessStart!).inSeconds
+        : 0;
+    final rate =
+        (secs > 0) ? '${(s._totalSamples / secs).toStringAsFixed(0)}/s' : '—';
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionLabel(Lang.t('sessionAnalysis'), large: true),
+            const SizedBox(height: 16),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              childAspectRatio: 1.75,
+              children: [
+                _StatCard(Lang.t('sessionDuration'), durStr, C.cyan,
+                    Icons.timer_rounded),
+                _StatCard(Lang.t('detections'), '${s._totalDet}', C.red,
+                    Icons.warning_rounded),
+                _StatCard(Lang.t('readings'), '${s._readings.length}', C.green,
+                    Icons.data_usage_rounded),
+                _StatCard(Lang.t('avgSignal'), avg.toStringAsFixed(1), C.orange,
+                    Icons.show_chart_rounded),
+                _StatCard(Lang.t('peakSignal'), peak.toStringAsFixed(1),
+                    C.purple, Icons.trending_up_rounded),
+                _StatCard(
+                    Lang.t('samplesPerSec'), rate, C.tSec, Icons.speed_rounded),
+              ],
+            ),
+            const SizedBox(height: 24),
+            if (!s._isPro)
+              _ProGate(
+                icon: Icons.download_rounded,
+                title: Lang.t('csvExportTitle'),
+                subtitle: Lang.t('csvExportSub'),
+                onUpgrade: () => s.navigateTo(1),
+              ),
+            const SizedBox(height: 16),
+            _SectionLabel(Lang.t('detectionLog')),
+            const SizedBox(height: 10),
+            if (s._detections.isEmpty)
+              Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 40),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.radar_rounded, color: C.tDim, size: 40),
+                      const SizedBox(height: 10),
+                      Text(
+                          s._calDone
+                              ? Lang.t('noDetectionsYet')
+                              : Lang.t('calibratingDots'),
+                          style: const TextStyle(color: C.tSec, fontSize: 13)),
+                    ],
+                  ),
+                ),
+              )
+            else
+              ...s._detections.reversed.take(50).map((d) => _DetTile(d: d)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ProGate extends StatelessWidget {
+  final IconData icon;
+  final String title, subtitle;
+  final VoidCallback onUpgrade;
+  const _ProGate({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onUpgrade,
+  });
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: C.gold.withOpacity(0.4)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 44,
+              height: 44,
+              decoration: BoxDecoration(
+                color: C.gold.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: C.gold.withOpacity(0.4)),
+              ),
+              child: Icon(icon, color: C.gold, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          color: C.tPrim,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700)),
+                  Text(subtitle,
+                      style: const TextStyle(color: C.tSec, fontSize: 11)),
+                ],
+              ),
+            ),
+            GestureDetector(
+              onTap: onUpgrade,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: C.gold.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: C.gold.withOpacity(0.4)),
+                ),
+                child: Text(Lang.t('pro'),
+                    style: const TextStyle(
+                        color: C.gold,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w900)),
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+class _StatCard extends StatelessWidget {
+  final String t, v;
+  final Color col;
+  final IconData ic;
+  const _StatCard(this.t, this.v, this.col, this.ic);
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: col.withOpacity(0.25)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(children: [
+              Icon(ic, color: col, size: 12),
+              const SizedBox(width: 6),
+              Flexible(
+                  child: Text(t,
+                      style: const TextStyle(
+                          fontSize: 9.5, color: C.tSec, letterSpacing: .3))),
+            ]),
+            Text(v,
+                style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: col,
+                    fontFamily: C.mono)),
+          ],
+        ),
+      );
+}
+
+class _DetTile extends StatelessWidget {
+  final DetectionEvent d;
+  const _DetTile({required this.d});
+  @override
+  Widget build(BuildContext context) => Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: d.color.withOpacity(0.25)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                  color: d.color.withOpacity(0.12), shape: BoxShape.circle),
+              child: Icon(d.icon, color: d.color, size: 17),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(d.label,
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: d.color)),
+                  Text(DateFormat('HH:mm:ss.S').format(d.ts),
+                      style: const TextStyle(fontSize: 10, color: C.tSec)),
+                ],
+              ),
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(d.signal.toStringAsFixed(1),
+                    style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w900,
+                        color: C.tPrim,
+                        fontFamily: C.mono)),
+                Text(
+                    '${(d.conf * 100).toStringAsFixed(0)}% ${Lang.t('confidence')}',
+                    style: const TextStyle(fontSize: 10, color: C.tSec)),
+              ],
+            ),
+          ],
+        ),
+      );
+}
+
+// ════════════════════════════════════════════════════════════════
+// SETTINGS PAGE
+// ════════════════════════════════════════════════════════════════
+class _SettingsPage extends StatelessWidget {
+  final _ShellState state;
+  const _SettingsPage({required this.state});
+  @override
+  Widget build(BuildContext context) {
+    final s = state;
+    return SafeArea(
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 100),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionLabel(Lang.t('settings'), large: true),
+            const SizedBox(height: 16),
+            // ── Tier status card
+            Container(
+              padding: const EdgeInsets.all(14),
+              margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(
+                color: s._isPro ? C.cyan.withOpacity(0.08) : C.card,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: s._isPro ? C.cyan.withOpacity(0.4) : C.border),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                      s._isPro
+                          ? Icons.workspace_premium_rounded
+                          : Icons.lock_open_rounded,
+                      color: s._isPro ? C.cyan : C.tSec,
+                      size: 22),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          s._isPro
+                              ? (s._tier == Tier.rewarded
+                                  ? '${Lang.t('proTierLabel')} — ${s._rewardedSecsLeft}${Lang.t('secLeft')}'
+                                  : 'PRO — ${s._tier.name.toUpperCase()}')
+                              : Lang.t('freeVersion'),
+                          style: TextStyle(
+                              color: s._isPro ? C.cyan : C.tSec,
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700),
+                        ),
+                        Text(
+                            s._isPro
+                                ? Lang.t('allFeaturesActive')
+                                : Lang.t('someFeaturesLocked'),
+                            style:
+                                const TextStyle(color: C.tDim, fontSize: 10)),
+                      ],
+                    ),
+                  ),
+                  if (!s._isPro)
+                    TextButton(
+                        onPressed: () => s.navigateTo(1),
+                        child: Text(Lang.t('upgradeArrow'),
+                            style:
+                                const TextStyle(color: C.cyan, fontSize: 12))),
+                ],
+              ),
+            ),
+            // ── Language selector
+            _SettingsGroup(
+              title: Lang.t('language'),
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.language_rounded,
+                          color: C.tSec, size: 18),
+                      const SizedBox(width: 10),
+                      Expanded(
+                          child: Text(Lang.t('languageSub'),
+                              style: const TextStyle(
+                                  color: C.tPrim, fontSize: 13))),
+                      _LangToggle(state: s),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // ── Detection thresholds
+            _SettingsGroup(
+              title: Lang.t('detectionThresholds'),
+              children: [
+                if (!s._isPro)
+                  _LockedFeature(
+                    label: Lang.t('lockedThresholds'),
+                    onUpgrade: () => s.navigateTo(1),
+                  )
+                else ...[
+                  _SliderRow(
+                    label: Lang.t('sensitivity'),
+                    value: s._sens,
+                    min: 1.0,
+                    max: 30.0,
+                    unit: '×',
+                    onChanged: (v) {
+                      s.setState(() => s._sens = v);
+                      s._savePrefs();
+                    },
+                  ),
+                  _SliderRow(
+                    label: Lang.t('alertThreshold'),
+                    value: s._alertT,
+                    min: 5.0,
+                    max: 80.0,
+                    unit: '',
+                    hint: Lang.t('alertHint'),
+                    onChanged: (v) {
+                      s.setState(() => s._alertT = v);
+                      s._savePrefs();
+                    },
+                  ),
+                  _SliderRow(
+                    label: Lang.t('strongThreshold'),
+                    value: s._strongT,
+                    min: 30.0,
+                    max: 150.0,
+                    unit: '',
+                    hint: Lang.t('strongHint'),
+                    onChanged: (v) {
+                      s.setState(() => s._strongT = v);
+                      s._savePrefs();
+                    },
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 16),
+            // ── Audio settings
+            _SettingsGroup(
+              title: Lang.t('audioSettings'),
+              children: [
+                _SwitchRow(
+                  label: Lang.t('audioAlerts'),
+                  icon: Icons.volume_up_rounded,
+                  value: s._sndOn,
+                  onChanged: (v) {
+                    s.setState(() => s._sndOn = v);
+                    if (!v) {
+                      s._audio.setVolume(0.0).catchError((_) {});
+                      s._beeping = false;
+                      s._audio.stop().catchError((_) {});
+                    }
+                    s._savePrefs();
+                  },
+                ),
+                if (!s._isPro)
+                  _LockedFeature(
+                    label: Lang.t('lockedAudioSens'),
+                    onUpgrade: () => s.navigateTo(1),
+                  )
+                else
+                  _SliderRow(
+                    label: Lang.t('volume'),
+                    value: s._audioVol,
+                    min: 0.05,
+                    max: 1.0,
+                    unit: '',
+                    color: C.orange,
+                    onChanged: (v) {
+                      s.setState(() => s._audioVol = v);
+                      if (s._sndOn && s._beeping) {
+                        s._audio.setVolume(v).catchError((_) {});
+                      }
+                      s._savePrefs();
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // ── Feedback
+            _SettingsGroup(
+              title: Lang.t('feedback'),
+              children: [
+                _SwitchRow(
+                  label: Lang.t('vibrationAlerts'),
+                  icon: Icons.vibration_rounded,
+                  value: s._vibOn,
+                  onChanged: (v) {
+                    s.setState(() => s._vibOn = v);
+                    s._savePrefs();
+                  },
+                ),
+                _SwitchRow(
+                  label: Lang.t('autoCalibrate'),
+                  icon: Icons.autorenew_rounded,
+                  value: s._autoC,
+                  onChanged: (v) {
+                    s.setState(() => s._autoC = v);
+                    s._savePrefs();
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // ── App info
+            _SettingsGroup(
+              title: Lang.t('app'),
+              children: [
+                _InfoRow(Lang.t('appVersion'), '5.0.0'),
+                _InfoRow(
+                    Lang.t('appStatus'),
+                    s._tier == Tier.free
+                        ? Lang.t('appFree')
+                        : s._tier == Tier.rewarded
+                            ? Lang.t('proTrialShort')
+                            : '⭐ ${s._tier.name.toUpperCase()}'),
+                _InfoRow(Lang.t('appTotalSamples'), '${s._totalSamples}'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// LANGUAGE TOGGLE WIDGET
+// ════════════════════════════════════════════════════════════════
+class _LangToggle extends StatelessWidget {
+  final _ShellState state;
+  const _LangToggle({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final currentLang = Lang.code.value;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _LangBtn(
+          label: 'EN',
+          selected: currentLang == 'en',
+          onTap: () {
+            Lang.set('en');
+            state._savePrefs();
+          },
+        ),
+        const SizedBox(width: 6),
+        _LangBtn(
+          label: 'TR',
+          selected: currentLang == 'tr',
+          onTap: () {
+            Lang.set('tr');
+            state._savePrefs();
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _LangBtn extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _LangBtn(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        decoration: BoxDecoration(
+          color: selected ? C.cyan : C.cardAlt,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: selected ? C.cyan : C.border),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.black : C.tSec,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 1,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+// SHARED SMALL HELPER WIDGETS
+// ════════════════════════════════════════════════════════════════
+class _SectionLabel extends StatelessWidget {
+  final String text;
+  final bool large;
+  const _SectionLabel(this.text, {this.large = false});
+  @override
+  Widget build(BuildContext context) => Text(
+        text,
+        style: TextStyle(
+          color: C.tSec,
+          fontSize: large ? 14 : 11,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 1.5,
+        ),
+      );
+}
+
+class _SettingsGroup extends StatelessWidget {
+  final String title;
+  final List<Widget> children;
+  const _SettingsGroup({required this.title, required this.children});
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: C.card,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: C.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _SectionLabel(title),
+            const SizedBox(height: 10),
+            ...children,
+          ],
+        ),
+      );
+}
+
+class _SliderRow extends StatelessWidget {
+  final String label;
+  final double value, min, max;
+  final String unit;
+  final String? hint;
+  final Color color;
+  final ValueChanged<double> onChanged;
+  const _SliderRow({
+    required this.label,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.unit,
+    this.hint,
+    this.color = C.cyan,
+    required this.onChanged,
+  });
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(label,
+                    style: const TextStyle(color: C.tPrim, fontSize: 12)),
+                Text('${value.toStringAsFixed(1)}$unit',
+                    style: TextStyle(
+                        color: color, fontSize: 12, fontFamily: C.mono)),
+              ],
+            ),
+            if (hint != null)
+              Text(hint!, style: const TextStyle(color: C.tDim, fontSize: 9)),
+            Slider(
+              value: value,
+              min: min,
+              max: max,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
+      );
+}
+
+class _SwitchRow extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+  const _SwitchRow({
+    required this.label,
+    required this.icon,
+    required this.value,
+    required this.onChanged,
+  });
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          children: [
+            Icon(icon, color: C.tSec, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+                child: Text(label,
+                    style: const TextStyle(color: C.tPrim, fontSize: 13))),
+            Switch(value: value, onChanged: onChanged),
+          ],
+        ),
+      );
+}
+
+class _InfoRow extends StatelessWidget {
+  final String label, value;
+  const _InfoRow(this.label, this.value);
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label, style: const TextStyle(color: C.tSec, fontSize: 12)),
+            Text(value,
+                style: const TextStyle(
+                    color: C.tPrim, fontSize: 12, fontFamily: C.mono)),
+          ],
+        ),
+      );
+}
+
+class _LockedFeature extends StatelessWidget {
+  final String label;
+  final VoidCallback onUpgrade;
+  const _LockedFeature({required this.label, required this.onUpgrade});
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            const Icon(Icons.lock_rounded, color: C.tDim, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+                child: Text(label,
+                    style: const TextStyle(color: C.tDim, fontSize: 12))),
+            GestureDetector(
+              onTap: onUpgrade,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: C.gold.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: C.gold.withOpacity(0.4)),
+                ),
+                child: Text(Lang.t('pro'),
+                    style: const TextStyle(
+                        color: C.gold,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900)),
+              ),
+            ),
+          ],
+        ),
+      );
+}
