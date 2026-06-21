@@ -2,35 +2,57 @@ name: spectras_magnetic_detector
 description: Professional Magnetic Field Detection & Metal Detector Application
 publish_to: 'none'
 
-version: 2.1.0+13
+version: 2.1.7+18
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # Core
+  # CORE
   sensors_plus: ^5.0.1
-  vibration: ^2.0.0
-  just_audio: ^0.9.40
-  shared_preferences: ^2.3.2
+  shared_preferences: ^2.2.2
   intl: ^0.19.0
-  flutter_blue_plus: ^1.33.1
   permission_handler: ^11.3.1
+
+  # AUDIO + VIBRATION
+  just_audio: ^0.9.40
+  vibration: ^2.0.0
+
+  # BLUETOOTH
+  flutter_blue_plus: ^1.33.1
+
+  # GOOGLE PLAY BILLING
+  in_app_purchase: ^3.2.1
+  in_app_purchase_android: ^0.4.0
+
+  # ADMOB
+  google_mobile_ads: ^5.1.0
+
+  # UI
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.5+1
+
+  # EXTRA
+  path_provider: ^2.1.1
+  share_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_launcher_icons: ^0.14.4
+
   flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.4
 
 flutter:
   uses-material-design: true
+
   assets:
     - assets/icon.png
     - assets/beep.mp3
+    - assets/images.png
 
 flutter_launcher_icons:
   android: "launcher_icon"
